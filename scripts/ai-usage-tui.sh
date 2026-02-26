@@ -5,6 +5,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=ai-usage-history.sh
+source "$SCRIPT_DIR/ai-usage-history.sh"
 
 AI_USAGE_PROVIDER="tui"
 
@@ -17,6 +19,8 @@ ensure_config() {
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "history_enabled": true,
+  "history_retention_days": 7,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -186,6 +190,16 @@ render_provider() {
     s_bar=$(progress_bar "$five_hour" 25)
     s_reset=$(time_until "$five_hour_reset")
     printf '  Session  %b %b%3d%%%b  %b↻ %s%b\n' "$s_bar" "$s_color" "$five_hour" "$RESET" "$DIM" "$s_reset" "$RESET"
+
+    # Sparklines (history)
+    local provider_key
+    provider_key=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    local spark_5h spark_7d
+    spark_5h=$(get_sparkline "$provider_key" "five_hour" 20)
+    spark_7d=$(get_sparkline "$provider_key" "seven_day" 20)
+    if [ -n "$spark_5h" ] || [ -n "$spark_7d" ]; then
+        printf '  %bHistory   %s  %s%b\n' "$DIM" "${spark_7d:-—}" "${spark_5h:-—}" "$RESET"
+    fi
 
     # Extra usage for Claude
     if [ "$name" = "Claude" ]; then
@@ -429,6 +443,50 @@ show_settings() {
     done
 }
 
+# ── History screen ────────────────────────────────────────────────────────
+
+show_history() {
+    clear
+    echo ""
+    gum style \
+        --border rounded \
+        --border-foreground 39 \
+        --padding "0 2" \
+        --margin "0 1" \
+        --bold \
+        "  Usage History (sparklines)"
+    echo ""
+
+    local providers=("claude" "codex" "gemini" "antigravity")
+    local names=("Claude" "Codex" "Gemini" "Antigravity")
+
+    for i in "${!providers[@]}"; do
+        local p="${providers[$i]}"
+        local n="${names[$i]}"
+        local history_file="$AI_USAGE_HISTORY_DIR/${p}.jsonl"
+
+        if [ ! -f "$history_file" ]; then
+            continue
+        fi
+
+        local count
+        count=$(wc -l < "$history_file" 2>/dev/null || echo 0)
+        [ "$count" -eq 0 ] && continue
+
+        local spark_5h spark_7d
+        spark_5h=$(get_sparkline "$p" "five_hour" 40)
+        spark_7d=$(get_sparkline "$p" "seven_day" 40)
+
+        printf '  %b%b%s%b  %b(%d samples)%b\n' "$BOLD" "$CYAN" "$n" "$RESET" "$DIM" "$count" "$RESET"
+        [ -n "$spark_7d" ] && printf '  Weekly   %b%s%b\n' "$DIM" "$spark_7d" "$RESET"
+        [ -n "$spark_5h" ] && printf '  Session  %b%s%b\n' "$DIM" "$spark_5h" "$RESET"
+        echo ""
+    done
+
+    printf '  %bPress any key to return%b\n' "$DIM" "$RESET"
+    read -r -s -n 1 < /dev/tty
+}
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 main() {
@@ -439,12 +497,15 @@ main() {
         show_dashboard
 
         local choice
-        choice=$(prompt_choice "r:Refresh" "s:Settings" "q:Quit")
+        choice=$(prompt_choice "r:Refresh" "h:History" "s:Settings" "q:Quit")
 
         case "$choice" in
             r)
                 rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
+                ;;
+            h)
+                show_history
                 ;;
             s)
                 show_settings

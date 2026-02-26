@@ -6,6 +6,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=ai-usage-history.sh
+source "$SCRIPT_DIR/ai-usage-history.sh"
 LIB_DIR=$(resolve_libexec_dir)
 
 AI_USAGE_PROVIDER="main"
@@ -17,9 +19,13 @@ rotate_log
 # ── Read config ───────────────────────────────────────────────────────────────
 
 DISPLAY_MODE="icon"
+HISTORY_ENABLED="true"
 if [ -f "$CONFIG_FILE" ]; then
     DISPLAY_MODE=$(jq -r '.display_mode // "icon"' "$CONFIG_FILE")
+    HISTORY_ENABLED=$(jq -r '.history_enabled // true' "$CONFIG_FILE")
 fi
+export AI_USAGE_HISTORY_RETENTION
+AI_USAGE_HISTORY_RETENTION=$(jq -r '.history_retention_days // 7' "$CONFIG_FILE" 2>/dev/null || echo 7)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +105,23 @@ if [ "$gemini_enabled" = "true" ]; then
 fi
 if [ "$antigravity_enabled" = "true" ]; then
     antigravity_json=$(fetch_provider antigravity ai-usage-antigravity.sh) && antigravity_ok=true
+fi
+
+# Record history snapshots
+if [ "$HISTORY_ENABLED" = "true" ]; then
+    _record() {
+        local ok="$1" json="$2" name="$3"
+        if $ok; then
+            local fh sd
+            fh=$(echo "$json" | jq -r '.five_hour // 0')
+            sd=$(echo "$json" | jq -r '.seven_day // 0')
+            record_snapshot "$name" "$fh" "$sd"
+        fi
+    }
+    _record "$claude_ok" "$claude_json" "claude"
+    _record "$codex_ok" "$codex_json" "codex"
+    _record "$gemini_ok" "$gemini_json" "gemini"
+    _record "$antigravity_ok" "$antigravity_json" "antigravity"
 fi
 
 # ── Compute max usage across all providers ────────────────────────────────────

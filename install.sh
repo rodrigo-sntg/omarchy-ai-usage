@@ -85,6 +85,8 @@ if [ ! -f "$AI_CONFIG" ]; then
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "history_enabled": true,
+  "history_retention_days": 7,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
