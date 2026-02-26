@@ -219,7 +219,7 @@ try_api() {
     fi
 
     # Build curl headers
-    local curl_args=(-sf "$USAGE_API_URL" -H "Authorization: Bearer $token" -H "User-Agent: ai-usage-waybar")
+    local curl_args=(-s "$USAGE_API_URL" -H "Authorization: Bearer $token" -H "User-Agent: ai-usage-waybar")
     if [ -n "$account_id" ]; then
         curl_args+=(-H "ChatGPT-Account-Id: $account_id")
     fi

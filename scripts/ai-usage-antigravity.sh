@@ -128,7 +128,7 @@ log_info "connected on $connect_scheme://127.0.0.1:$connect_port"
 request_body='{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en","ideVersion":"unknown"}}'
 
 log_info "fetching user status..."
-user_status=$(retry_curl -s --insecure --max-time 5 \
+user_status=$(retry_curl --retries 1 -s --insecure --max-time 5 \
     -X POST "${connect_scheme}://127.0.0.1:${connect_port}/exa.language_server_pb.LanguageServerService/GetUserStatus" \
     -H "X-Codeium-Csrf-Token: $csrf_token" \
     -H "Connect-Protocol-Version: 1" \
@@ -137,7 +137,7 @@ user_status=$(retry_curl -s --insecure --max-time 5 \
 
 if [ $? -ne 0 ] || [ -z "$user_status" ]; then
     log_warn "GetUserStatus failed, trying GetCommandModelConfigs..."
-    user_status=$(retry_curl -s --insecure --max-time 5 \
+    user_status=$(retry_curl --retries 1 -s --insecure --max-time 5 \
         -X POST "${connect_scheme}://127.0.0.1:${connect_port}/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs" \
         -H "X-Codeium-Csrf-Token: $csrf_token" \
         -H "Connect-Protocol-Version: 1" \
