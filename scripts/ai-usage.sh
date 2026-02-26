@@ -23,20 +23,7 @@ fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-countdown_from_iso() {
-    local iso="$1"
-    if [ -z "$iso" ] || [ "$iso" = "null" ]; then echo "?"; return; fi
-    local reset_epoch now_epoch diff_s
-    reset_epoch=$(date -d "$iso" +%s 2>/dev/null) || { echo "?"; return; }
-    now_epoch=$(date +%s)
-    diff_s=$(( reset_epoch - now_epoch ))
-    [ "$diff_s" -le 0 ] && echo "now" && return
-    local d=$(( diff_s / 86400 )) h=$(( (diff_s % 86400) / 3600 )) m=$(( (diff_s % 3600) / 60 ))
-    if [ "$d" -gt 0 ]; then echo "${d}d ${h}h"
-    elif [ "$h" -gt 0 ]; then echo "${h}h ${m}m"
-    elif [ "$m" -eq 0 ]; then echo "<1m"
-    else echo "${m}m"; fi
-}
+# countdown_from_iso removed — now using format_countdown from lib.sh
 
 progress_bar_6() {
     local pct="$1"
@@ -109,9 +96,10 @@ tooltip_lines=()
 if $claude_ok; then
     c7=$(round_float "$(echo "$claude_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
     c5=$(round_float "$(echo "$claude_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
-    cr=$(echo "$claude_json" | jq -r '.five_hour_reset // ""')
+    c5r=$(echo "$claude_json" | jq -r '.five_hour_reset // ""')
+    c7r=$(echo "$claude_json" | jq -r '.seven_day_reset // ""')
     c_bar=$(progress_bar_6 "$c5")
-    tooltip_lines+=("Claude  ${c_bar}  ${c5}%  ↻ $(countdown_from_iso "$cr")")
+    tooltip_lines+=("Claude  ${c_bar}  ${c5}%  5h↻$(format_countdown "$c5r")  7d↻$(format_countdown "$c7r")")
     [ "$c7" -gt "$max_pct" ] 2>/dev/null && max_pct=$c7
     [ "$c5" -gt "$max_pct" ] 2>/dev/null && max_pct=$c5
 fi
@@ -119,9 +107,10 @@ fi
 if $codex_ok; then
     x7=$(round_float "$(echo "$codex_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
     x5=$(round_float "$(echo "$codex_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
-    xr=$(echo "$codex_json" | jq -r '.five_hour_reset // ""')
+    x5r=$(echo "$codex_json" | jq -r '.five_hour_reset // ""')
+    x7r=$(echo "$codex_json" | jq -r '.seven_day_reset // ""')
     x_bar=$(progress_bar_6 "$x5")
-    tooltip_lines+=("Codex   ${x_bar}  ${x5}%  ↻ $(countdown_from_iso "$xr")")
+    tooltip_lines+=("Codex   ${x_bar}  ${x5}%  5h↻$(format_countdown "$x5r")  7d↻$(format_countdown "$x7r")")
     [ "$x7" -gt "$max_pct" ] 2>/dev/null && max_pct=$x7
     [ "$x5" -gt "$max_pct" ] 2>/dev/null && max_pct=$x5
 fi
@@ -129,9 +118,10 @@ fi
 if $gemini_ok; then
     g7=$(round_float "$(echo "$gemini_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
     g5=$(round_float "$(echo "$gemini_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
-    gr=$(echo "$gemini_json" | jq -r '.five_hour_reset // ""')
+    g5r=$(echo "$gemini_json" | jq -r '.five_hour_reset // ""')
+    g7r=$(echo "$gemini_json" | jq -r '.seven_day_reset // ""')
     g_bar=$(progress_bar_6 "$g5")
-    tooltip_lines+=("Gemini  ${g_bar}  ${g5}%  ↻ $(countdown_from_iso "$gr")")
+    tooltip_lines+=("Gemini  ${g_bar}  ${g5}%  5h↻$(format_countdown "$g5r")  7d↻$(format_countdown "$g7r")")
     [ "$g7" -gt "$max_pct" ] 2>/dev/null && max_pct=$g7
     [ "$g5" -gt "$max_pct" ] 2>/dev/null && max_pct=$g5
 fi
@@ -139,9 +129,10 @@ fi
 if $antigravity_ok; then
     a7=$(round_float "$(echo "$antigravity_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
     a5=$(round_float "$(echo "$antigravity_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
-    ar=$(echo "$antigravity_json" | jq -r '.five_hour_reset // ""')
+    a5r=$(echo "$antigravity_json" | jq -r '.five_hour_reset // ""')
+    a7r=$(echo "$antigravity_json" | jq -r '.seven_day_reset // ""')
     a_bar=$(progress_bar_6 "$a5")
-    tooltip_lines+=("Antigr  ${a_bar}  ${a5}%  ↻ $(countdown_from_iso "$ar")")
+    tooltip_lines+=("Antigr  ${a_bar}  ${a5}%  5h↻$(format_countdown "$a5r")  7d↻$(format_countdown "$a7r")")
     [ "$a7" -gt "$max_pct" ] 2>/dev/null && max_pct=$a7
     [ "$a5" -gt "$max_pct" ] 2>/dev/null && max_pct=$a5
 fi
