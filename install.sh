@@ -85,6 +85,10 @@ if [ ! -f "$AI_CONFIG" ]; then
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "notifications_enabled": true,
+  "notify_warn_threshold": 80,
+  "notify_critical_threshold": 95,
+  "notify_cooldown_minutes": 15,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },

@@ -17,6 +17,10 @@ ensure_config() {
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "notifications_enabled": true,
+  "notify_warn_threshold": 80,
+  "notify_critical_threshold": 95,
+  "notify_cooldown_minutes": 15,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -334,10 +338,13 @@ show_settings() {
             "⚙  Settings"
         echo ""
 
-        local current_mode current_interval
+        local current_mode current_interval notify_on notify_warn notify_crit
         current_mode=$(jq -r '.display_mode // "icon"' "$AI_USAGE_CONFIG")
         current_interval=$(jq -r '.refresh_interval // 60' "$AI_USAGE_CONFIG")
-        
+        notify_on=$(jq -r '.notifications_enabled // true' "$AI_USAGE_CONFIG")
+        notify_warn=$(jq -r '.notify_warn_threshold // 80' "$AI_USAGE_CONFIG")
+        notify_crit=$(jq -r '.notify_critical_threshold // 95' "$AI_USAGE_CONFIG")
+
         local claude_on codex_on gemini_on antigravity_on
         claude_on=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG")
         codex_on=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$AI_USAGE_CONFIG")
@@ -359,8 +366,13 @@ show_settings() {
         printf "  [%b] ${UNDERLINE}g${RESET}emini\n" "$gemini_mark"
         printf "  [%b] ${UNDERLINE}a${RESET}ntigravity\n" "$antigravity_mark"
         echo ""
+        local notify_mark
+        [ "$notify_on" = "true" ] && notify_mark="${GREEN}✓${RESET}" || notify_mark="${RED}✗${RESET}"
+        printf "  ${BOLD}Notifications:${RESET}\n"
+        printf "  [%b] ${UNDERLINE}n${RESET}otifications  (warn: %s%% crit: %s%%)\n" "$notify_mark" "$notify_warn" "$notify_crit"
+        echo ""
         local choice
-        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
+        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "n:Toggle notifications" "b:Back")
 
         case "$choice" in
             d)
@@ -419,6 +431,14 @@ show_settings() {
                 [ "$antigravity_on" = "true" ] && new_val=false || new_val=true
                 local updated
                 updated=$(jq --argjson v "$new_val" '.providers.antigravity.enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
+                refresh_waybar
+                ;;
+            n)
+                local new_val
+                [ "$notify_on" = "true" ] && new_val=false || new_val=true
+                local updated
+                updated=$(jq --argjson v "$new_val" '.notifications_enabled = $v' "$AI_USAGE_CONFIG")
                 atomic_write "$AI_USAGE_CONFIG" "$updated"
                 refresh_waybar
                 ;;

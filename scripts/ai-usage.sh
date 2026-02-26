@@ -146,6 +146,74 @@ if $antigravity_ok; then
     [ "$a5" -gt "$max_pct" ] 2>/dev/null && max_pct=$a5
 fi
 
+# ── Notifications ────────────────────────────────────────────────────────────
+
+NOTIFY_STATE_FILE="$AI_USAGE_CACHE_DIR/notify-state.json"
+
+_read_notify_config() {
+    local key="$1" default="$2"
+    if [ -f "$CONFIG_FILE" ]; then
+        local val
+        val=$(jq -r ".$key // empty" "$CONFIG_FILE" 2>/dev/null)
+        [ -n "$val" ] && echo "$val" && return
+    fi
+    echo "$default"
+}
+
+check_and_notify() {
+    local provider="$1" pct="$2" reset_info="$3"
+    local notify_enabled warn_thresh crit_thresh cooldown_min
+
+    notify_enabled=$(_read_notify_config "notifications_enabled" "true")
+    [ "$notify_enabled" != "true" ] && return
+
+    command -v notify-send &>/dev/null || return
+
+    warn_thresh=$(_read_notify_config "notify_warn_threshold" "80")
+    crit_thresh=$(_read_notify_config "notify_critical_threshold" "95")
+    cooldown_min=$(_read_notify_config "notify_cooldown_minutes" "15")
+
+    [ "$pct" -lt "$warn_thresh" ] 2>/dev/null && return
+
+    # Check cooldown
+    local now last_time cooldown_s
+    now=$(date +%s)
+    cooldown_s=$((cooldown_min * 60))
+    if [ -f "$NOTIFY_STATE_FILE" ]; then
+        last_time=$(jq -r ".${provider}_last // 0" "$NOTIFY_STATE_FILE" 2>/dev/null)
+        if [ $((now - last_time)) -lt "$cooldown_s" ]; then
+            return
+        fi
+    fi
+
+    local urgency="normal"
+    [ "$pct" -ge "$crit_thresh" ] 2>/dev/null && urgency="critical"
+
+    notify-send -u "$urgency" -a "AI Usage" \
+        "AI Usage Alert" \
+        "${provider^} usage at ${pct}% — resets in ${reset_info}" 2>/dev/null
+
+    # Update cooldown state
+    local state="{}"
+    [ -f "$NOTIFY_STATE_FILE" ] && state=$(cat "$NOTIFY_STATE_FILE" 2>/dev/null)
+    state=$(echo "$state" | jq --argjson t "$now" ".${provider}_last = \$t" 2>/dev/null)
+    [ -n "$state" ] && atomic_write "$NOTIFY_STATE_FILE" "$state"
+}
+
+# Check notifications for each provider
+if $claude_ok; then
+    check_and_notify "claude" "$c5" "$(countdown_from_iso "$cr")"
+fi
+if $codex_ok; then
+    check_and_notify "codex" "$x5" "$(countdown_from_iso "$xr")"
+fi
+if $gemini_ok; then
+    check_and_notify "gemini" "$g5" "$(countdown_from_iso "$gr")"
+fi
+if $antigravity_ok; then
+    check_and_notify "antigravity" "$a5" "$(countdown_from_iso "$ar")"
+fi
+
 # ── CSS class ─────────────────────────────────────────────────────────────────
 
 if [ "$max_pct" -ge 85 ]; then class="ai-crit"
