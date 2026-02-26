@@ -55,7 +55,7 @@ error_json() {
     local full_msg="$msg"
     [ -n "$hint" ] && full_msg="$msg. Hint: $hint"
     log_error "$full_msg"
-    printf '{"error":"%s","provider":"%s"}\n' "$full_msg" "$provider"
+    jq -n -c --arg e "$full_msg" --arg p "$provider" '{"error":$e,"provider":$p}'
     exit 1
 }
 
