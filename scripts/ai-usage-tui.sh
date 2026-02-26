@@ -485,7 +485,7 @@ copy_to_clipboard() {
         report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Antigravity:' "$a5" "$a7" "$ap")"
     fi
 
-    echo "$report" | eval "$clip_cmd" 2>/dev/null
+    echo "$report" | $clip_cmd 2>/dev/null
     gum style --foreground 82 "  ✓ Copied to clipboard!"
     sleep 1
 }
