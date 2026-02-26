@@ -111,7 +111,8 @@ if $claude_ok; then
     c5=$(round_float "$(echo "$claude_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
     cr=$(echo "$claude_json" | jq -r '.five_hour_reset // ""')
     c_bar=$(progress_bar_6 "$c5")
-    tooltip_lines+=("Claude  ${c_bar}  ${c5}%  ↻ $(countdown_from_iso "$cr")")
+    c5_cd=$(countdown_from_iso "$cr")
+    tooltip_lines+=("Claude  ${c_bar}  ${c5}%  ↻ $c5_cd")
     [ "$c7" -gt "$max_pct" ] 2>/dev/null && max_pct=$c7
     [ "$c5" -gt "$max_pct" ] 2>/dev/null && max_pct=$c5
 fi
@@ -121,7 +122,8 @@ if $codex_ok; then
     x5=$(round_float "$(echo "$codex_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
     xr=$(echo "$codex_json" | jq -r '.five_hour_reset // ""')
     x_bar=$(progress_bar_6 "$x5")
-    tooltip_lines+=("Codex   ${x_bar}  ${x5}%  ↻ $(countdown_from_iso "$xr")")
+    x5_cd=$(countdown_from_iso "$xr")
+    tooltip_lines+=("Codex   ${x_bar}  ${x5}%  ↻ $x5_cd")
     [ "$x7" -gt "$max_pct" ] 2>/dev/null && max_pct=$x7
     [ "$x5" -gt "$max_pct" ] 2>/dev/null && max_pct=$x5
 fi
@@ -131,7 +133,8 @@ if $gemini_ok; then
     g5=$(round_float "$(echo "$gemini_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
     gr=$(echo "$gemini_json" | jq -r '.five_hour_reset // ""')
     g_bar=$(progress_bar_6 "$g5")
-    tooltip_lines+=("Gemini  ${g_bar}  ${g5}%  ↻ $(countdown_from_iso "$gr")")
+    g5_cd=$(countdown_from_iso "$gr")
+    tooltip_lines+=("Gemini  ${g_bar}  ${g5}%  ↻ $g5_cd")
     [ "$g7" -gt "$max_pct" ] 2>/dev/null && max_pct=$g7
     [ "$g5" -gt "$max_pct" ] 2>/dev/null && max_pct=$g5
 fi
@@ -141,7 +144,8 @@ if $antigravity_ok; then
     a5=$(round_float "$(echo "$antigravity_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
     ar=$(echo "$antigravity_json" | jq -r '.five_hour_reset // ""')
     a_bar=$(progress_bar_6 "$a5")
-    tooltip_lines+=("Antigr  ${a_bar}  ${a5}%  ↻ $(countdown_from_iso "$ar")")
+    a5_cd=$(countdown_from_iso "$ar")
+    tooltip_lines+=("Antigr  ${a_bar}  ${a5}%  ↻ $a5_cd")
     [ "$a7" -gt "$max_pct" ] 2>/dev/null && max_pct=$a7
     [ "$a5" -gt "$max_pct" ] 2>/dev/null && max_pct=$a5
 fi
@@ -150,35 +154,27 @@ fi
 
 NOTIFY_STATE_FILE="$AI_USAGE_CACHE_DIR/notify-state.json"
 
-_read_notify_config() {
-    local key="$1" default="$2"
-    if [ -f "$CONFIG_FILE" ]; then
-        local val
-        val=$(jq -r ".$key // empty" "$CONFIG_FILE" 2>/dev/null)
-        [ -n "$val" ] && echo "$val" && return
-    fi
-    echo "$default"
-}
+# Read notification config once
+NOTIFY_ENABLED="true"
+NOTIFY_WARN_THRESH=80
+NOTIFY_CRIT_THRESH=95
+NOTIFY_COOLDOWN_MIN=15
+if [ -f "$CONFIG_FILE" ]; then
+    NOTIFY_ENABLED=$(jq -r '.notifications_enabled // true' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_WARN_THRESH=$(jq -r '.notify_warn_threshold // 80' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_CRIT_THRESH=$(jq -r '.notify_critical_threshold // 95' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_COOLDOWN_MIN=$(jq -r '.notify_cooldown_minutes // 15' "$CONFIG_FILE" 2>/dev/null)
+fi
 
-check_and_notify() {
+_send_notification() {
     local provider="$1" pct="$2" reset_info="$3"
-    local notify_enabled warn_thresh crit_thresh cooldown_min
 
-    notify_enabled=$(_read_notify_config "notifications_enabled" "true")
-    [ "$notify_enabled" != "true" ] && return
-
-    command -v notify-send &>/dev/null || return
-
-    warn_thresh=$(_read_notify_config "notify_warn_threshold" "80")
-    crit_thresh=$(_read_notify_config "notify_critical_threshold" "95")
-    cooldown_min=$(_read_notify_config "notify_cooldown_minutes" "15")
-
-    [ "$pct" -lt "$warn_thresh" ] 2>/dev/null && return
+    [ "$pct" -lt "$NOTIFY_WARN_THRESH" ] 2>/dev/null && return
 
     # Check cooldown
     local now last_time cooldown_s
     now=$(date +%s)
-    cooldown_s=$((cooldown_min * 60))
+    cooldown_s=$((NOTIFY_COOLDOWN_MIN * 60))
     if [ -f "$NOTIFY_STATE_FILE" ]; then
         last_time=$(jq -r ".${provider}_last // 0" "$NOTIFY_STATE_FILE" 2>/dev/null)
         if [ $((now - last_time)) -lt "$cooldown_s" ]; then
@@ -187,7 +183,7 @@ check_and_notify() {
     fi
 
     local urgency="normal"
-    [ "$pct" -ge "$crit_thresh" ] 2>/dev/null && urgency="critical"
+    [ "$pct" -ge "$NOTIFY_CRIT_THRESH" ] 2>/dev/null && urgency="critical"
 
     notify-send -u "$urgency" -a "AI Usage" \
         "AI Usage Alert" \
@@ -197,21 +193,19 @@ check_and_notify() {
     local state="{}"
     [ -f "$NOTIFY_STATE_FILE" ] && state=$(cat "$NOTIFY_STATE_FILE" 2>/dev/null)
     state=$(echo "$state" | jq --argjson t "$now" ".${provider}_last = \$t" 2>/dev/null)
-    [ -n "$state" ] && atomic_write "$NOTIFY_STATE_FILE" "$state"
+    if [ -n "$state" ]; then
+        atomic_write "$NOTIFY_STATE_FILE" "$state"
+    else
+        log_warn "failed to update notification state for $provider"
+    fi
 }
 
-# Check notifications for each provider
-if $claude_ok; then
-    check_and_notify "claude" "$c5" "$(countdown_from_iso "$cr")"
-fi
-if $codex_ok; then
-    check_and_notify "codex" "$x5" "$(countdown_from_iso "$xr")"
-fi
-if $gemini_ok; then
-    check_and_notify "gemini" "$g5" "$(countdown_from_iso "$gr")"
-fi
-if $antigravity_ok; then
-    check_and_notify "antigravity" "$a5" "$(countdown_from_iso "$ar")"
+# Send notifications if enabled and notify-send is available
+if [ "$NOTIFY_ENABLED" = "true" ] && command -v notify-send &>/dev/null; then
+    $claude_ok && _send_notification "claude" "$c5" "$c5_cd"
+    $codex_ok && _send_notification "codex" "$x5" "$x5_cd"
+    $gemini_ok && _send_notification "gemini" "$g5" "$g5_cd"
+    $antigravity_ok && _send_notification "antigravity" "$a5" "$a5_cd"
 fi
 
 # ── CSS class ─────────────────────────────────────────────────────────────────
