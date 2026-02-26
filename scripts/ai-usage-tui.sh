@@ -429,6 +429,72 @@ show_settings() {
     done
 }
 
+# ── Log viewer ───────────────────────────────────────────────────────────────
+
+show_logs() {
+    while true; do
+        clear
+        echo ""
+        gum style \
+            --border rounded \
+            --border-foreground 39 \
+            --padding "0 2" \
+            --margin "0 1" \
+            --bold \
+            "📋  Log Viewer"
+        echo ""
+
+        local choice
+        choice=$(prompt_choice "a:All logs" "e:Errors only" "p:Filter by provider" "b:Back")
+
+        case "$choice" in
+            a) _show_log_pager "" ;;
+            e) _show_log_pager "ERROR\|WARN" ;;
+            p) _show_log_provider_filter ;;
+            b) return ;;
+        esac
+    done
+}
+
+_show_log_provider_filter() {
+    local provider
+    provider=$(gum choose "claude" "codex" "gemini" "antigravity" \
+        --cursor.foreground 39 \
+        --item.foreground 255 \
+        --header "Select provider:")
+    [ -n "$provider" ] && _show_log_pager "\[$provider\]"
+}
+
+_show_log_pager() {
+    local filter="$1"
+    local log_file="$AI_USAGE_LOG_FILE"
+
+    if [ ! -f "$log_file" ]; then
+        gum style --foreground 196 "  No log file found."
+        sleep 2
+        return
+    fi
+
+    local content
+    if [ -n "$filter" ]; then
+        content=$(tac "$log_file" 2>/dev/null | grep -i "$filter" | head -100)
+    else
+        content=$(tac "$log_file" 2>/dev/null | head -100)
+    fi
+
+    if [ -z "$content" ]; then
+        gum style --foreground 214 "  No matching log entries."
+        sleep 2
+        return
+    fi
+
+    if command -v gum &>/dev/null; then
+        echo "$content" | gum pager
+    else
+        echo "$content" | less
+    fi
+}
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 main() {
@@ -439,7 +505,7 @@ main() {
         show_dashboard
 
         local choice
-        choice=$(prompt_choice "r:Refresh" "s:Settings" "q:Quit")
+        choice=$(prompt_choice "r:Refresh" "s:Settings" "l:View logs" "q:Quit")
 
         case "$choice" in
             r)
@@ -450,6 +516,9 @@ main() {
                 show_settings
                 rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
+                ;;
+            l)
+                show_logs
                 ;;
             q)
                 clear
