@@ -108,10 +108,10 @@ fetch_all() {
     ANTIGRAVITY_OK=false
 
     local claude_enabled codex_enabled gemini_enabled antigravity_enabled
-    claude_enabled=$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
-    codex_enabled=$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
-    gemini_enabled=$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
-    antigravity_enabled=$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
+    claude_enabled=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    codex_enabled=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    gemini_enabled=$(jq -r 'if .providers.gemini.enabled == null then true else .providers.gemini.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    antigravity_enabled=$(jq -r 'if .providers.antigravity.enabled == null then true else .providers.antigravity.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
 
     LIBEXEC_DIR=$(resolve_libexec_dir)
 
@@ -288,27 +288,33 @@ show_dashboard() {
         "󰧑  AI Usage Dashboard"
     echo ""
 
+    local c_on x_on g_on a_on
+    c_on=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    x_on=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    g_on=$(jq -r 'if .providers.gemini.enabled == null then true else .providers.gemini.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+    a_on=$(jq -r 'if .providers.antigravity.enabled == null then true else .providers.antigravity.enabled end' "$AI_USAGE_CONFIG" 2>/dev/null)
+
     if $CLAUDE_OK; then
         render_provider "$CLAUDE_JSON" "Claude"
-    elif [ "$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+    elif [ "$c_on" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Claude"
     fi
 
     if $CODEX_OK; then
         render_provider "$CODEX_JSON" "Codex"
-    elif [ "$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+    elif [ "$x_on" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Codex"
     fi
 
     if $GEMINI_OK; then
         render_provider "$GEMINI_JSON" "Gemini"
-    elif [ "$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+    elif [ "$g_on" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Gemini"
     fi
 
     if $ANTIGRAVITY_OK; then
         render_provider "$ANTIGRAVITY_JSON" "Antigravity"
-    elif [ "$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+    elif [ "$a_on" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Antigravity"
     fi
 
@@ -331,11 +337,12 @@ show_settings() {
         local current_mode current_interval
         current_mode=$(jq -r '.display_mode // "icon"' "$AI_USAGE_CONFIG")
         current_interval=$(jq -r '.refresh_interval // 60' "$AI_USAGE_CONFIG")
+        
         local claude_on codex_on gemini_on antigravity_on
-        claude_on=$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG")
-        codex_on=$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG")
-        gemini_on=$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG")
-        antigravity_on=$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG")
+        claude_on=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG")
+        codex_on=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$AI_USAGE_CONFIG")
+        gemini_on=$(jq -r 'if .providers.gemini.enabled == null then true else .providers.gemini.enabled end' "$AI_USAGE_CONFIG")
+        antigravity_on=$(jq -r 'if .providers.antigravity.enabled == null then true else .providers.antigravity.enabled end' "$AI_USAGE_CONFIG")
 
         local claude_mark codex_mark gemini_mark antigravity_mark
         [ "$claude_on" = "true" ] && claude_mark="${GREEN}✓${RESET}" || claude_mark="${RED}✗${RESET}"
