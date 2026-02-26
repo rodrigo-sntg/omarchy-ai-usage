@@ -152,6 +152,17 @@ if [ "$max_pct" -ge 85 ]; then class="ai-crit"
 elif [ "$max_pct" -ge 60 ]; then class="ai-warn"
 else class="ai-ok"; fi
 
+# Detect theme and append light class if needed
+_theme_pref=$(jq -r '.theme // "auto"' "$CONFIG_FILE" 2>/dev/null)
+_is_light=false
+if [ "$_theme_pref" = "light" ]; then
+    _is_light=true
+elif [ "$_theme_pref" = "auto" ]; then
+    _gtk_scheme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")
+    case "$_gtk_scheme" in *light*) _is_light=true ;; esac
+fi
+$_is_light && class="$class ai-usage-light"
+
 # ── Build output based on display mode ────────────────────────────────────────
 
 if ! $claude_ok && ! $codex_ok && ! $gemini_ok && ! $antigravity_ok; then
