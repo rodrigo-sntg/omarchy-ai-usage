@@ -38,11 +38,11 @@ while IFS= read -r line; do
 done < <(ps -ax -o pid=,command= 2>/dev/null)
 
 if [ -z "$server_pid" ]; then
-    error_json "Antigravity language server not running"
+    error_json "Antigravity language server not running" "open Antigravity IDE to start the server"
 fi
 
 if [ -z "$csrf_token" ]; then
-    error_json "could not extract CSRF token from Antigravity process"
+    error_json "could not extract CSRF token from process" "Antigravity may need to be restarted"
 fi
 
 log_info "found Antigravity server (pid=$server_pid, extension_port=${extension_port:-none})"
@@ -76,7 +76,7 @@ if [ -n "$extension_port" ]; then
 fi
 
 if [ ${#ports[@]} -eq 0 ]; then
-    error_json "no listening ports found for Antigravity server (pid=$server_pid)"
+    error_json "no listening ports found (pid=$server_pid)" "install 'ss' or 'lsof' for port discovery"
 fi
 
 log_info "discovered ${#ports[@]} port(s): ${ports[*]}"
@@ -118,7 +118,7 @@ for port in "${ports[@]}"; do
 done
 
 if [ -z "$connect_port" ]; then
-    error_json "could not find Antigravity connect port"
+    error_json "could not find connect port" "Antigravity server may be initializing; try again"
 fi
 
 log_info "connected on $connect_scheme://127.0.0.1:$connect_port"
@@ -147,7 +147,7 @@ if [ $? -ne 0 ] || [ -z "$user_status" ]; then
         2>/dev/null)
 
     if [ $? -ne 0 ] || [ -z "$user_status" ]; then
-        error_json "failed to fetch quota from Antigravity server"
+        error_json "failed to fetch quota from Antigravity server" "server may be restarting; try again"
     fi
 fi
 
@@ -200,7 +200,7 @@ output=$(echo "$user_status" | jq -c --arg plan "$plan_name" '
 ' 2>/dev/null)
 
 if [ $? -ne 0 ] || [ -z "$output" ]; then
-    error_json "failed to parse Antigravity quota response"
+    error_json "failed to parse Antigravity quota response" "server API may have changed; check logs"
 fi
 
 # Cache and output

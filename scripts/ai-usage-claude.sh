@@ -17,12 +17,12 @@ check_cache "$CACHE_FILE"
 
 # Read credentials
 if [ ! -f "$CREDENTIALS_FILE" ]; then
-    error_json "credentials file not found: $CREDENTIALS_FILE"
+    error_json "credentials file not found" "run 'claude auth' or check $CREDENTIALS_FILE"
 fi
 
 oauth_json=$(jq -r '.claudeAiOauth' "$CREDENTIALS_FILE" 2>/dev/null)
 if [ -z "$oauth_json" ] || [ "$oauth_json" = "null" ]; then
-    error_json "claudeAiOauth not found in credentials"
+    error_json "claudeAiOauth not found in credentials" "re-authenticate with 'claude auth'"
 fi
 
 access_token=$(echo "$oauth_json" | jq -r '.accessToken')
@@ -31,7 +31,7 @@ expires_at=$(echo "$oauth_json" | jq -r '.expiresAt')
 rate_limit_tier=$(echo "$oauth_json" | jq -r '.rateLimitTier // "unknown"')
 
 if [ -z "$access_token" ] || [ "$access_token" = "null" ]; then
-    error_json "accessToken not found in credentials"
+    error_json "accessToken not found in credentials" "re-authenticate with 'claude auth'"
 fi
 
 if [ -z "$refresh_token" ] || [ "$refresh_token" = "null" ]; then
@@ -49,7 +49,7 @@ if [ "$now_ms" -ge "$expires_at" ]; then
 
     if [ $? -ne 0 ] || [ -z "$refresh_response" ]; then
         log_error "token refresh request failed: $refresh_response"
-        error_json "token refresh request failed"
+        error_json "token refresh failed (network error)" "check internet connection or run 'make check'"
     fi
 
     new_access_token=$(echo "$refresh_response" | jq -r '.access_token // empty')
@@ -99,7 +99,7 @@ usage_response=$(curl -sf "$USAGE_URL" \
 
 if [ $? -ne 0 ] || [ -z "$usage_response" ]; then
     log_error "usage API request failed: $usage_response"
-    error_json "usage API request failed"
+    error_json "usage API request failed" "check internet or run 'make check'"
 fi
 
 # Check for API error
@@ -120,7 +120,7 @@ output=$(echo "$usage_response" | jq -c --arg plan "$rate_limit_tier" '{
 }' 2>/dev/null)
 
 if [ $? -ne 0 ] || [ -z "$output" ]; then
-    error_json "failed to parse usage response"
+    error_json "failed to parse usage response" "API may have changed format; check logs"
 fi
 
 # Cache and output

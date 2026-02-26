@@ -22,14 +22,14 @@ if [ -f "$SETTINGS_FILE" ]; then
     auth_type=$(jq -r '.authType // "oauth-personal"' "$SETTINGS_FILE" 2>/dev/null)
     case "$auth_type" in
         api-key|vertex-ai)
-            error_json "unsupported auth type: $auth_type (only oauth-personal is supported)"
+            error_json "unsupported auth type: $auth_type" "only oauth-personal is supported; update ~/.gemini/settings.json"
             ;;
     esac
 fi
 
 # Read credentials
 if [ ! -f "$CREDENTIALS_FILE" ]; then
-    error_json "credentials file not found: $CREDENTIALS_FILE (run 'gemini auth' first)"
+    error_json "credentials file not found" "run 'gemini auth login' to authenticate"
 fi
 
 access_token=$(jq -r '.access_token // empty' "$CREDENTIALS_FILE" 2>/dev/null)
@@ -37,7 +37,7 @@ refresh_token=$(jq -r '.refresh_token // empty' "$CREDENTIALS_FILE" 2>/dev/null)
 expiry_date=$(jq -r '.expiry_date // 0' "$CREDENTIALS_FILE" 2>/dev/null)
 
 if [ -z "$access_token" ]; then
-    error_json "access_token not found in credentials"
+    error_json "access_token not found in credentials" "re-authenticate with 'gemini auth login'"
 fi
 
 # ── Extract OAuth client ID/secret from Gemini CLI ────────────────────────────
@@ -103,7 +103,7 @@ if [ "$now_ms" -ge "$expiry_date" ] && [ -n "$refresh_token" ]; then
     GEMINI_CLIENT_SECRET=""
 
     if ! extract_client_credentials; then
-        error_json "could not extract OAuth client credentials from Gemini CLI"
+        error_json "could not extract OAuth client credentials from Gemini CLI" "ensure 'gemini' is installed and in PATH"
     fi
 
     refresh_response=$(curl -sf -X POST "$TOKEN_URL" \
@@ -116,7 +116,7 @@ if [ "$now_ms" -ge "$expiry_date" ] && [ -n "$refresh_token" ]; then
 
     if [ $? -ne 0 ] || [ -z "$refresh_response" ]; then
         log_error "token refresh request failed: $refresh_response"
-        error_json "token refresh request failed"
+        error_json "token refresh failed (network error)" "check internet or run 'make check'"
     fi
 
     new_access_token=$(echo "$refresh_response" | jq -r '.access_token // empty')
@@ -203,7 +203,7 @@ quota_response=$(curl -sf -X POST "$QUOTA_URL" \
 
 if [ $? -ne 0 ] || [ -z "$quota_response" ]; then
     log_error "quota API request failed: $quota_response"
-    error_json "quota API request failed"
+    error_json "quota API request failed" "check internet or run 'make check'"
 fi
 
 # Log raw response for debugging (truncated)
@@ -229,7 +229,7 @@ output=$(echo "$quota_response" | jq -c --arg plan "$plan" "
 " 2>/dev/null)
 
 if [ $? -ne 0 ] || [ -z "$output" ]; then
-    error_json "failed to parse quota response"
+    error_json "failed to parse quota response" "Google API may have changed format; check logs"
 fi
 
 # Cache and output

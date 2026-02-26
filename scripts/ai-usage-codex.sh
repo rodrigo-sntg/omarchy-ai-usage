@@ -272,4 +272,4 @@ if api_output=$(try_api) && [ -n "$api_output" ]; then
 fi
 
 # Both methods failed
-error_json "both RPC and API methods failed"
+error_json "both RPC and API methods failed" "ensure codex is installed and authenticated; run 'make check'"
