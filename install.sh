@@ -61,14 +61,12 @@ echo "  ✓ Scripts installed"
 echo "  Creating Waybar wrappers in $WAYBAR_SCRIPTS/"
 mkdir -p "$WAYBAR_SCRIPTS"
 
-# Wrapper for the main module
 cat > "$WAYBAR_SCRIPTS/ai-usage.sh" << EOF
 #!/bin/bash
 # Waybar wrapper for ai-usage
 exec "$LIB_DIR/ai-usage.sh" "\$@"
 EOF
 
-# Wrapper for the TUI
 cat > "$WAYBAR_SCRIPTS/ai-usage-tui.sh" << EOF
 #!/bin/bash
 # Waybar wrapper for ai-usage-tui
@@ -100,33 +98,33 @@ else
     echo "  ✓ Config already exists (preserved)"
 fi
 
-# ── Add waybar module ─────────────────────────────────────────────────────────
+# ── Add/Update waybar module ──────────────────────────────────────────────────
 
-if ! grep -q '"custom/ai-usage"' "$WAYBAR_CONFIG" 2>/dev/null; then
-    echo "  Adding module to waybar config"
-    cp "$WAYBAR_CONFIG" "${WAYBAR_CONFIG}.bak.$(date +%s)"
+echo "  Updating waybar module configuration"
+[ -f "$WAYBAR_CONFIG" ] && cp "$WAYBAR_CONFIG" "${WAYBAR_CONFIG}.bak.$(date +%s)"
 
-    tmp=$(mktemp)
-    python3 -c "
+tmp=$(mktemp)
+python3 -c "
 import json, re
 
 with open('$WAYBAR_CONFIG', 'r') as f:
     content = f.read()
 
+# Clean comments for JSON parsing
 clean = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
 data = json.loads(clean)
 
-# Add to modules-right at the very beginning (leftmost of the right section)
+# Update modules-right position
 mods = data.get('modules-right', [])
-if 'custom/ai-usage' not in mods:
-    # Insert at position 0 to be the leftmost of the right block
-    mods.insert(0, 'custom/ai-usage')
-    # If separators exist, ensure one follows to give breathing room
-    if 'custom/separator-right' in mods:
-        # Find where it was just inserted and put separator after
-        mods.insert(1, 'custom/separator-right')
-    data['modules-right'] = mods
+# Remove existing occurrences to avoid duplicates and fix position
+mods = [m for m in mods if m != 'custom/ai-usage' and m != 'custom/separator-right']
 
+# Insert at the beginning: ai-usage then a separator
+mods.insert(0, 'custom/separator-right')
+mods.insert(0, 'custom/ai-usage')
+data['modules-right'] = mods
+
+# Always update the module definition to ensure paths are correct
 data['custom/ai-usage'] = {
     'exec': '$WAYBAR_SCRIPTS/ai-usage.sh',
     'return-type': 'json',
@@ -141,52 +139,52 @@ with open('$tmp', 'w') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
 " 2>/dev/null
 
-    if [ -s "$tmp" ]; then
-        mv "$tmp" "$WAYBAR_CONFIG"
-        echo "  ✓ Waybar config updated"
-    else
-        rm -f "$tmp"
-        echo "  ⚠ Could not auto-update waybar config."
-    fi
+if [ -s "$tmp" ]; then
+    mv "$tmp" "$WAYBAR_CONFIG"
+    echo "  ✓ Waybar module position and config updated"
 else
-    echo "  ✓ Waybar module already configured"
+    rm -f "$tmp"
+    echo "  ⚠ Could not update waybar config."
 fi
 
-# ── Add CSS ───────────────────────────────────────────────────────────────────
+# ── Add/Update CSS ───────────────────────────────────────────────────────────
 
-if ! grep -q '#custom-ai-usage' "$WAYBAR_STYLE" 2>/dev/null; then
-    echo "  Adding CSS styles"
-    cp "$WAYBAR_STYLE" "${WAYBAR_STYLE}.bak.$(date +%s)"
+echo "  Updating CSS styles"
+[ -f "$WAYBAR_STYLE" ] && cp "$WAYBAR_STYLE" "${WAYBAR_STYLE}.bak.$(date +%s)"
 
-    cat >> "$WAYBAR_STYLE" << 'CSS'
+# Remove old block if it exists
+tmp_css=$(mktemp)
+python3 -c "
+import re
+with open('$WAYBAR_STYLE', 'r') as f:
+    content = f.read()
 
-/* ===== AI Usage ===== */
+# Remove existing block
+content = re.sub(r'/\* ===== AI Usage ===== \*/.*?#custom-ai-usage[^}]*\}', '', content, flags=re.DOTALL)
+content = content.strip() + '\n\n'
 
-#custom-ai-usage {
-  padding: 0 10px;
-  font-size: 14px;
-  transition: all 0.2s ease;
-}
+# Add new block
+content += '/* ===== AI Usage ===== */\n\n'
+content += '#custom-ai-usage {\n'
+content += '  padding: 0 10px;\n'
+content += '  font-size: 14px;\n'
+content += '  transition: all 0.2s ease;\n'
+content += '}\n\n'
+content += '#custom-ai-usage.ai-ok { color: #a6e3a1; }\n'
+content += '#custom-ai-usage.ai-warn { color: #FFC107; }\n'
+content += '#custom-ai-usage.ai-crit { color: #D35F5F; }\n'
+content += '#custom-ai-usage:hover { color: #e68e0d; }\n'
 
-#custom-ai-usage.ai-ok {
-  color: #a6e3a1;
-}
+with open('$tmp_css', 'w') as f:
+    f.write(content)
+" 2>/dev/null
 
-#custom-ai-usage.ai-warn {
-  color: #FFC107;
-}
-
-#custom-ai-usage.ai-crit {
-  color: #D35F5F;
-}
-
-#custom-ai-usage:hover {
-  color: #e68e0d;
-}
-CSS
-    echo "  ✓ CSS styles added"
+if [ -s "$tmp_css" ]; then
+    mv "$tmp_css" "$WAYBAR_STYLE"
+    echo "  ✓ CSS styles updated"
 else
-    echo "  ✓ CSS styles already present"
+    rm -f "$tmp_css"
+    echo "  ⚠ Could not update CSS."
 fi
 
 # ── Restart waybar ────────────────────────────────────────────────────────────
