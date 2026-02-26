@@ -21,6 +21,10 @@ if [ -f "$CONFIG_FILE" ]; then
     DISPLAY_MODE=$(jq -r '.display_mode // "icon"' "$CONFIG_FILE")
 fi
 
+# Export cache TTL so provider subprocesses inherit it
+export AI_USAGE_CACHE_TTL
+AI_USAGE_CACHE_TTL=$(get_config_value "cache_ttl_seconds" "$CACHE_MAX_AGE_DEFAULT")
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 countdown_from_iso() {
