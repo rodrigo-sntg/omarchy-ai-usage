@@ -46,13 +46,16 @@ rotate_log() {
 
 # ── Error output ──────────────────────────────────────────────────────────────
 
-# Print error JSON and exit. Usage: error_json "message"
+# Print error JSON and exit. Usage: error_json "message" ["hint"]
 # Automatically includes provider name from AI_USAGE_PROVIDER.
 error_json() {
     local msg="$1"
+    local hint="${2:-}"
     local provider="${AI_USAGE_PROVIDER:-unknown}"
-    log_error "$msg"
-    printf '{"error":"%s","provider":"%s"}\n' "$msg" "$provider"
+    local full_msg="$msg"
+    [ -n "$hint" ] && full_msg="$msg. Hint: $hint"
+    log_error "$full_msg"
+    jq -n -c --arg e "$full_msg" --arg p "$provider" '{"error":$e,"provider":$p}'
     exit 1
 }
 
