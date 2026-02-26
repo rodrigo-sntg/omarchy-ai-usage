@@ -60,10 +60,29 @@ fi
 if grep -q '#custom-ai-usage' "$WAYBAR_STYLE" 2>/dev/null; then
     echo "  Removing CSS styles..."
     cp "$WAYBAR_STYLE" "${WAYBAR_STYLE}.bak.$(date +%s)"
-    sed -i '/\/\* ===== AI Usage =====/,/^$/d' "$WAYBAR_STYLE"
-    # Clean up any remaining ai-usage rules
-    sed -i '/#custom-ai-usage/d' "$WAYBAR_STYLE"
-    echo "  ✓ CSS styles removed"
+    tmp=$(mktemp)
+    python3 -c "
+import re
+
+with open('$WAYBAR_STYLE', 'r') as f:
+    css = f.read()
+
+# Remove the entire AI Usage block: from comment marker to the last ai-usage rule
+css = re.sub(r'/\* ===== AI Usage ===== \*/.*?#custom-ai-usage[^}]*\}', '', css, flags=re.DOTALL)
+
+# Clean up excessive blank lines left behind
+css = re.sub(r'\n{3,}', '\n\n', css)
+
+with open('$tmp', 'w') as f:
+    f.write(css)
+" 2>/dev/null
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$WAYBAR_STYLE"
+        echo "  ✓ CSS styles removed"
+    else
+        rm -f "$tmp"
+        echo "  ⚠ Could not auto-clean CSS. Remove #custom-ai-usage rules manually."
+    fi
 fi
 
 # ── Remove cache ──────────────────────────────────────────────────────────────
