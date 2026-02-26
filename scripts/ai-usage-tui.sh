@@ -429,6 +429,67 @@ show_settings() {
     done
 }
 
+# ── Clipboard export ─────────────────────────────────────────────────────────
+
+_get_clipboard_cmd() {
+    if command -v wl-copy &>/dev/null; then echo "wl-copy"
+    elif command -v xclip &>/dev/null; then echo "xclip -selection clipboard"
+    elif command -v xsel &>/dev/null; then echo "xsel --clipboard --input"
+    else echo ""; fi
+}
+
+_extract_pct() {
+    local json="$1" field="$2"
+    echo "$json" | jq -r ".$field // 0" 2>/dev/null | cut -d. -f1
+}
+
+copy_to_clipboard() {
+    local clip_cmd
+    clip_cmd=$(_get_clipboard_cmd)
+    if [ -z "$clip_cmd" ]; then
+        gum style --foreground 196 "  No clipboard tool found. Install wl-clipboard."
+        sleep 2
+        return
+    fi
+
+    local report
+    report="AI Usage Report ($(date '+%Y-%m-%d %H:%M'))"
+    report+=$'\n'"──────────────────────────────────"
+
+    if $CLAUDE_OK; then
+        local c5 c7 cp
+        c5=$(_extract_pct "$CLAUDE_JSON" "five_hour")
+        c7=$(_extract_pct "$CLAUDE_JSON" "seven_day")
+        cp=$(echo "$CLAUDE_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Claude:' "$c5" "$c7" "$cp")"
+    fi
+    if $CODEX_OK; then
+        local x5 x7 xp
+        x5=$(_extract_pct "$CODEX_JSON" "five_hour")
+        x7=$(_extract_pct "$CODEX_JSON" "seven_day")
+        xp=$(echo "$CODEX_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Codex:' "$x5" "$x7" "$xp")"
+    fi
+    if $GEMINI_OK; then
+        local g5 g7 gp
+        g5=$(_extract_pct "$GEMINI_JSON" "five_hour")
+        g7=$(_extract_pct "$GEMINI_JSON" "seven_day")
+        gp=$(echo "$GEMINI_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Gemini:' "$g5" "$g7" "$gp")"
+    fi
+    if $ANTIGRAVITY_OK; then
+        local a5 a7 ap
+        a5=$(_extract_pct "$ANTIGRAVITY_JSON" "five_hour")
+        a7=$(_extract_pct "$ANTIGRAVITY_JSON" "seven_day")
+        ap=$(echo "$ANTIGRAVITY_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Antigravity:' "$a5" "$a7" "$ap")"
+    fi
+
+    echo "$report" | eval "$clip_cmd" 2>/dev/null
+    gum style --foreground 82 "  ✓ Copied to clipboard!"
+    sleep 1
+}
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 main() {
@@ -439,7 +500,7 @@ main() {
         show_dashboard
 
         local choice
-        choice=$(prompt_choice "r:Refresh" "s:Settings" "q:Quit")
+        choice=$(prompt_choice "r:Refresh" "s:Settings" "c:Copy to clipboard" "q:Quit")
 
         case "$choice" in
             r)
@@ -450,6 +511,9 @@ main() {
                 show_settings
                 rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
+                ;;
+            c)
+                copy_to_clipboard
                 ;;
             q)
                 clear
