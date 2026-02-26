@@ -116,14 +116,15 @@ with open('$WAYBAR_CONFIG', 'r') as f:
 clean = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
 data = json.loads(clean)
 
+# Add to modules-right at the very beginning (leftmost of the right section)
 mods = data.get('modules-right', [])
 if 'custom/ai-usage' not in mods:
-    try:
-        idx = mods.index('cpu')
-        mods.insert(idx, 'custom/separator-right')
-        mods.insert(idx, 'custom/ai-usage')
-    except ValueError:
-        mods.append('custom/ai-usage')
+    # Insert at position 0 to be the leftmost of the right block
+    mods.insert(0, 'custom/ai-usage')
+    # If separators exist, ensure one follows to give breathing room
+    if 'custom/separator-right' in mods:
+        # Find where it was just inserted and put separator after
+        mods.insert(1, 'custom/separator-right')
     data['modules-right'] = mods
 
 data['custom/ai-usage'] = {
@@ -162,8 +163,8 @@ if ! grep -q '#custom-ai-usage' "$WAYBAR_STYLE" 2>/dev/null; then
 /* ===== AI Usage ===== */
 
 #custom-ai-usage {
-  padding: 0 6px;
-  font-size: 12px;
+  padding: 0 10px;
+  font-size: 14px;
   transition: all 0.2s ease;
 }
 
