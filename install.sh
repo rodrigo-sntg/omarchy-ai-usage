@@ -85,6 +85,7 @@ if [ ! -f "$AI_CONFIG" ]; then
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "theme": "auto",
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -163,17 +164,25 @@ with open('$WAYBAR_STYLE', 'r') as f:
 content = re.sub(r'/\* ===== AI Usage ===== \*/.*?#custom-ai-usage[^}]*\}', '', content, flags=re.DOTALL)
 content = content.strip() + '\n\n'
 
-# Add new block
+# Add new block with theme support
 content += '/* ===== AI Usage ===== */\n\n'
 content += '#custom-ai-usage {\n'
 content += '  padding: 0 10px;\n'
 content += '  font-size: 14px;\n'
 content += '  transition: all 0.2s ease;\n'
 content += '}\n\n'
+content += '/* Dark theme (default) */\n'
 content += '#custom-ai-usage.ai-ok { color: #a6e3a1; }\n'
 content += '#custom-ai-usage.ai-warn { color: #FFC107; }\n'
 content += '#custom-ai-usage.ai-crit { color: #D35F5F; }\n'
-content += '#custom-ai-usage:hover { color: #e68e0d; }\n'
+content += '#custom-ai-usage:hover { color: #e68e0d; }\n\n'
+content += '/* Light theme */\n'
+content += '@media (prefers-color-scheme: light) {\n'
+content += '  #custom-ai-usage.ai-ok { color: #40a02b; }\n'
+content += '  #custom-ai-usage.ai-warn { color: #df8e1d; }\n'
+content += '  #custom-ai-usage.ai-crit { color: #d20f39; }\n'
+content += '  #custom-ai-usage:hover { color: #fe640b; }\n'
+content += '}\n'
 
 with open('$tmp_css', 'w') as f:
     f.write(content)

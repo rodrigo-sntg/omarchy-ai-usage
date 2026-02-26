@@ -17,6 +17,7 @@ ensure_config() {
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "theme": "auto",
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -28,17 +29,63 @@ EOF
     fi
 }
 
+# ── Theme detection ──────────────────────────────────────────────────────────
+
+detect_system_theme() {
+    # Check config override first
+    local theme_pref
+    theme_pref=$(jq -r '.theme // "auto"' "$AI_USAGE_CONFIG" 2>/dev/null)
+    if [ "$theme_pref" = "dark" ] || [ "$theme_pref" = "light" ]; then
+        echo "$theme_pref"
+        return
+    fi
+
+    # GTK theme detection
+    local gtk_theme
+    gtk_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in
+        *dark*) echo "dark"; return ;;
+        *light*) echo "light"; return ;;
+    esac
+
+    gtk_theme=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in
+        *[Ll]ight*) echo "light"; return ;;
+    esac
+
+    echo "dark"
+}
+
 # ── Colors and styles ─────────────────────────────────────────────────────────
 
 BOLD='\033[1m'
 DIM='\033[2m'
 UNDERLINE='\033[4m'
 RESET='\033[0m'
-CYAN='\033[36m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-RED='\033[31m'
-WHITE='\033[37m'
+
+apply_theme() {
+    local theme="${1:-dark}"
+    if [ "$theme" = "light" ]; then
+        # Catppuccin Latte
+        CYAN='\033[38;2;30;102;245m'     # Blue
+        GREEN='\033[38;2;64;160;43m'     # Green
+        YELLOW='\033[38;2;223;142;29m'   # Yellow
+        RED='\033[38;2;210;15;57m'       # Red
+        WHITE='\033[38;2;76;79;105m'     # Text
+        DIM='\033[38;2;140;143;161m'     # Subtext0
+    else
+        # Catppuccin Mocha (default)
+        CYAN='\033[36m'
+        GREEN='\033[32m'
+        YELLOW='\033[33m'
+        RED='\033[31m'
+        WHITE='\033[37m'
+        DIM='\033[2m'
+    fi
+}
+
+CURRENT_THEME=$(detect_system_theme)
+apply_theme "$CURRENT_THEME"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -350,8 +397,12 @@ show_settings() {
         [ "$gemini_on" = "true" ] && gemini_mark="${GREEN}✓${RESET}" || gemini_mark="${RED}✗${RESET}"
         [ "$antigravity_on" = "true" ] && antigravity_mark="${GREEN}✓${RESET}" || antigravity_mark="${RED}✗${RESET}"
 
+        local current_theme
+        current_theme=$(jq -r '.theme // "auto"' "$AI_USAGE_CONFIG")
+
         printf "  ${BOLD}${UNDERLINE}d${RESET}${BOLD}isplay mode:${RESET}  %s\n" "$current_mode"
         printf "  ${BOLD}${UNDERLINE}i${RESET}${BOLD}nterval:${RESET}      %ss\n" "$current_interval"
+        printf "  ${BOLD}${UNDERLINE}t${RESET}${BOLD}heme:${RESET}         %s\n" "$current_theme"
         echo ""
         printf "  ${BOLD}Providers:${RESET}\n"
         printf "  [%b] ${UNDERLINE}c${RESET}laude\n" "$claude_mark"
@@ -360,7 +411,7 @@ show_settings() {
         printf "  [%b] ${UNDERLINE}a${RESET}ntigravity\n" "$antigravity_mark"
         echo ""
         local choice
-        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
+        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "t:Theme" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
 
         case "$choice" in
             d)
@@ -375,6 +426,21 @@ show_settings() {
                     updated=$(jq --arg m "$new_mode" '.display_mode = $m' "$AI_USAGE_CONFIG")
                     atomic_write "$AI_USAGE_CONFIG" "$updated"
                     refresh_waybar
+                fi
+                ;;
+            t)
+                local new_theme
+                new_theme=$(gum choose "auto" "dark" "light" \
+                    --cursor.foreground 39 \
+                    --item.foreground 255 \
+                    --header "Select theme:" \
+                    --selected "$current_theme")
+                if [ -n "$new_theme" ]; then
+                    local updated
+                    updated=$(jq --arg t "$new_theme" '.theme = $t' "$AI_USAGE_CONFIG")
+                    atomic_write "$AI_USAGE_CONFIG" "$updated"
+                    CURRENT_THEME=$(detect_system_theme)
+                    apply_theme "$CURRENT_THEME"
                 fi
                 ;;
             i)
