@@ -128,23 +128,21 @@ log_info "connected on $connect_scheme://127.0.0.1:$connect_port"
 request_body='{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en","ideVersion":"unknown"}}'
 
 log_info "fetching user status..."
-user_status=$(curl -sf --insecure --max-time 5 \
+user_status=$(retry_curl --retries 1 -s --insecure --max-time 5 \
     -X POST "${connect_scheme}://127.0.0.1:${connect_port}/exa.language_server_pb.LanguageServerService/GetUserStatus" \
     -H "X-Codeium-Csrf-Token: $csrf_token" \
     -H "Connect-Protocol-Version: 1" \
     -H "Content-Type: application/json" \
-    -d "$request_body" \
-    2>/dev/null)
+    -d "$request_body")
 
 if [ $? -ne 0 ] || [ -z "$user_status" ]; then
     log_warn "GetUserStatus failed, trying GetCommandModelConfigs..."
-    user_status=$(curl -sf --insecure --max-time 5 \
+    user_status=$(retry_curl --retries 1 -s --insecure --max-time 5 \
         -X POST "${connect_scheme}://127.0.0.1:${connect_port}/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs" \
         -H "X-Codeium-Csrf-Token: $csrf_token" \
         -H "Connect-Protocol-Version: 1" \
         -H "Content-Type: application/json" \
-        -d "$request_body" \
-        2>/dev/null)
+        -d "$request_body")
 
     if [ $? -ne 0 ] || [ -z "$user_status" ]; then
         error_json "failed to fetch quota from Antigravity server" "server may be restarting; try again"

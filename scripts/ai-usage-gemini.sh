@@ -217,11 +217,10 @@ project_id=""
 plan="unknown"
 
 log_info "discovering project via loadCodeAssist..."
-code_assist_response=$(curl -sf -X POST "$LOAD_CODE_ASSIST_URL" \
+code_assist_response=$(retry_curl -s -X POST "$LOAD_CODE_ASSIST_URL" \
     -H "Authorization: Bearer $access_token" \
     -H "Content-Type: application/json" \
-    -d '{"metadata":{"ideType":"GEMINI_CLI","pluginType":"GEMINI"}}' \
-    2>&1)
+    -d '{"metadata":{"ideType":"GEMINI_CLI","pluginType":"GEMINI"}}')
 
 if [ -n "$code_assist_response" ]; then
     project_id=$(echo "$code_assist_response" | jq -r '.cloudaicompanionProject // empty' 2>/dev/null)
@@ -254,11 +253,10 @@ if [ -n "$project_id" ]; then
 fi
 
 log_info "fetching quota..."
-quota_response=$(curl -sf -X POST "$QUOTA_URL" \
+quota_response=$(retry_curl -s -X POST "$QUOTA_URL" \
     -H "Authorization: Bearer $access_token" \
     -H "Content-Type: application/json" \
-    -d "$quota_body" \
-    2>&1)
+    -d "$quota_body")
 
 if [ $? -ne 0 ] || [ -z "$quota_response" ]; then
     log_error "quota API request failed: $quota_response"

@@ -219,14 +219,14 @@ try_api() {
     fi
 
     # Build curl headers
-    local curl_args=(-sf "$USAGE_API_URL" -H "Authorization: Bearer $token" -H "User-Agent: ai-usage-waybar")
+    local curl_args=(-s "$USAGE_API_URL" -H "Authorization: Bearer $token" -H "User-Agent: ai-usage-waybar")
     if [ -n "$account_id" ]; then
         curl_args+=(-H "ChatGPT-Account-Id: $account_id")
     fi
 
     log_info "trying OAuth API fallback..."
     local api_response
-    api_response=$(curl "${curl_args[@]}" 2>&1)
+    api_response=$(retry_curl "${curl_args[@]}")
     if [ $? -ne 0 ] || [ -z "$api_response" ]; then
         log_warn "OAuth API request failed: $api_response"
         return 1
