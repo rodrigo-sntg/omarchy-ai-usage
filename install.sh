@@ -3,9 +3,8 @@ set -e
 
 # omarchy-ai-usage installer
 # Adds AI usage monitoring (Claude, Codex, Gemini, Antigravity) to Waybar
-# Works from: git clone (./install.sh) or AUR package (omarchy-ai-usage-setup)
 
-# Detect script source: AUR installs to /usr/share, git clone uses relative path
+# Detect script source
 if [ -d "/usr/share/omarchy-ai-usage/scripts" ]; then
     SOURCE_DIR="/usr/share/omarchy-ai-usage/scripts"
 else
@@ -13,13 +12,13 @@ else
     SOURCE_DIR="$SCRIPT_DIR/scripts"
 fi
 
-LIBEXEC_DIR="$HOME/.local/libexec/ai-usage"
+LIB_DIR="$HOME/.local/libexec/ai-usage"
 WAYBAR_SCRIPTS="$HOME/.config/waybar/scripts"
 WAYBAR_CONFIG="$HOME/.config/waybar/config.jsonc"
 WAYBAR_STYLE="$HOME/.config/waybar/style.css"
 AI_CONFIG_DIR="$HOME/.config/ai-usage"
 AI_CONFIG="$AI_CONFIG_DIR/config.json"
-AI_CACHE_DIR="$HOME/.cache/ai-usage"
+AI_CACHE_DIR="$HOME/.cache/ai-usage/cache"
 
 echo ""
 echo "  󰧑  omarchy-ai-usage installer"
@@ -46,45 +45,38 @@ if [ ! -d "$SOURCE_DIR" ] || [ ! -f "$SOURCE_DIR/ai-usage.sh" ]; then
     exit 1
 fi
 
-# ── Install scripts to XDG libexec ───────────────────────────────────────────
+# ── Copy scripts to libexec ──────────────────────────────────────────────────
 
-echo "  Installing scripts to $LIBEXEC_DIR/"
-mkdir -p "$LIBEXEC_DIR"
-cp "$SOURCE_DIR/lib.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-claude.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-codex.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-gemini.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-antigravity.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-tui.sh" "$LIBEXEC_DIR/"
-cp "$SOURCE_DIR/ai-usage-check.sh" "$LIBEXEC_DIR/"
-chmod +x "$LIBEXEC_DIR"/*.sh
+echo "  Installing scripts to $LIB_DIR/"
+mkdir -p "$LIB_DIR"
+mkdir -p "$AI_CACHE_DIR"
+
+# Copy all scripts from source
+cp "$SOURCE_DIR"/*.sh "$LIB_DIR/"
+chmod +x "$LIB_DIR"/*.sh
 echo "  ✓ Scripts installed"
 
-# ── Create thin waybar wrappers ──────────────────────────────────────────────
+# ── Create Waybar wrappers ───────────────────────────────────────────────────
 
-echo "  Creating waybar wrappers in $WAYBAR_SCRIPTS/"
+echo "  Creating Waybar wrappers in $WAYBAR_SCRIPTS/"
 mkdir -p "$WAYBAR_SCRIPTS"
 
-cat > "$WAYBAR_SCRIPTS/ai-usage.sh" << 'WRAPPER'
+# Wrapper for the main module
+cat > "$WAYBAR_SCRIPTS/ai-usage.sh" << EOF
 #!/bin/bash
-# Thin wrapper — delegates to XDG libexec
-exec "$HOME/.local/libexec/ai-usage/ai-usage.sh" "$@"
-WRAPPER
+# Waybar wrapper for ai-usage
+exec "$LIB_DIR/ai-usage.sh" "\$@"
+EOF
 
-cat > "$WAYBAR_SCRIPTS/ai-usage-tui.sh" << 'WRAPPER'
+# Wrapper for the TUI
+cat > "$WAYBAR_SCRIPTS/ai-usage-tui.sh" << EOF
 #!/bin/bash
-# Thin wrapper — delegates to XDG libexec
-exec "$HOME/.local/libexec/ai-usage/ai-usage-tui.sh" "$@"
-WRAPPER
+# Waybar wrapper for ai-usage-tui
+exec "$LIB_DIR/ai-usage-tui.sh" "\$@"
+EOF
 
-chmod +x "$WAYBAR_SCRIPTS/ai-usage.sh" "$WAYBAR_SCRIPTS/ai-usage-tui.sh"
-echo "  ✓ Waybar wrappers created"
-
-# ── Create cache/log directory ───────────────────────────────────────────────
-
-mkdir -p "$AI_CACHE_DIR"
-echo "  ✓ Cache directory ready ($AI_CACHE_DIR)"
+chmod +x "$WAYBAR_SCRIPTS"/ai-usage*.sh
+echo "  ✓ Wrappers created"
 
 # ── Create default config ─────────────────────────────────────────────────────
 
@@ -112,8 +104,6 @@ fi
 
 if ! grep -q '"custom/ai-usage"' "$WAYBAR_CONFIG" 2>/dev/null; then
     echo "  Adding module to waybar config"
-
-    # Backup
     cp "$WAYBAR_CONFIG" "${WAYBAR_CONFIG}.bak.$(date +%s)"
 
     tmp=$(mktemp)
@@ -123,29 +113,27 @@ import json, re
 with open('$WAYBAR_CONFIG', 'r') as f:
     content = f.read()
 
-# Remove comments for JSON parsing
 clean = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
 data = json.loads(clean)
 
-# Add to modules-right before 'custom/weather' (leftmost position)
 mods = data.get('modules-right', [])
 if 'custom/ai-usage' not in mods:
     try:
-        idx = mods.index('custom/weather')
+        idx = mods.index('cpu')
+        mods.insert(idx, 'custom/separator-right')
         mods.insert(idx, 'custom/ai-usage')
     except ValueError:
-        mods.insert(0, 'custom/ai-usage')
+        mods.append('custom/ai-usage')
     data['modules-right'] = mods
 
-# Add module definition
 data['custom/ai-usage'] = {
-    'exec': '~/.config/waybar/scripts/ai-usage.sh',
+    'exec': '$WAYBAR_SCRIPTS/ai-usage.sh',
     'return-type': 'json',
     'interval': 60,
     'signal': 9,
     'tooltip': True,
     'format': '{}',
-    'on-click': 'omarchy-launch-floating-terminal-with-presentation ~/.config/waybar/scripts/ai-usage-tui.sh'
+    'on-click': 'omarchy-launch-floating-terminal-with-presentation $WAYBAR_SCRIPTS/ai-usage-tui.sh'
 }
 
 with open('$tmp', 'w') as f:
@@ -157,7 +145,7 @@ with open('$tmp', 'w') as f:
         echo "  ✓ Waybar config updated"
     else
         rm -f "$tmp"
-        echo "  ⚠ Could not auto-update waybar config. Add manually."
+        echo "  ⚠ Could not auto-update waybar config."
     fi
 else
     echo "  ✓ Waybar module already configured"
@@ -167,8 +155,6 @@ fi
 
 if ! grep -q '#custom-ai-usage' "$WAYBAR_STYLE" 2>/dev/null; then
     echo "  Adding CSS styles"
-
-    # Backup
     cp "$WAYBAR_STYLE" "${WAYBAR_STYLE}.bak.$(date +%s)"
 
     cat >> "$WAYBAR_STYLE" << 'CSS'
@@ -177,6 +163,7 @@ if ! grep -q '#custom-ai-usage' "$WAYBAR_STYLE" 2>/dev/null; then
 
 #custom-ai-usage {
   padding: 0 6px;
+  font-size: 12px;
   transition: all 0.2s ease;
 }
 
@@ -205,15 +192,8 @@ fi
 
 echo ""
 echo "  Restarting waybar..."
+pkill -RTMIN+9 waybar 2>/dev/null || true
 omarchy-restart-waybar 2>/dev/null || true
 echo ""
 echo "  ✓ Installation complete!"
-echo ""
-echo "  The 󰧑 icon should now appear in your waybar."
-echo "  Click it to open the AI Usage dashboard."
-echo ""
-echo "  Scripts:  $LIBEXEC_DIR/"
-echo "  Config:   $AI_CONFIG"
-echo "  Logs:     $AI_CACHE_DIR/ai-usage.log"
-echo "  Wrappers: $WAYBAR_SCRIPTS/ai-usage*.sh"
 echo ""
