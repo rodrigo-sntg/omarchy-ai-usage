@@ -133,6 +133,68 @@ format_countdown() {
     else echo "< 1m"; fi
 }
 
+# ── Retry curl ───────────────────────────────────────────────────────────────
+
+# Curl wrapper with retry and exponential backoff for transient failures.
+# Usage: retry_curl [--retries N] [curl_args...]
+# Retries up to 3 times (default) on HTTP 429/5xx or connection errors.
+# Does NOT retry on 400/401/403/404.
+retry_curl() {
+    local max_retries=3
+    if [ "$1" = "--retries" ]; then
+        max_retries="$2"
+        shift 2
+    fi
+    local attempt=0
+    local backoff=1
+    local tmp_out tmp_hdr http_code curl_exit
+
+    tmp_out=$(mktemp) || return 1
+    tmp_hdr=$(mktemp) || { rm -f "$tmp_out"; return 1; }
+
+    while [ "$attempt" -lt "$max_retries" ]; do
+        http_code=$(curl -w "%{http_code}" -o "$tmp_out" -D "$tmp_hdr" "$@" 2>/dev/null)
+        curl_exit=$?
+
+        # Success: curl OK and HTTP 2xx/3xx
+        if [ "$curl_exit" -eq 0 ] && [[ "$http_code" =~ ^[23] ]]; then
+            cat "$tmp_out"
+            rm -f "$tmp_out" "$tmp_hdr"
+            return 0
+        fi
+
+        # Don't retry on auth/client errors
+        case "$http_code" in
+            400|401|403|404) break ;;
+        esac
+
+        # Retryable: connection errors (curl exit 6,7,28,35,52,56) or HTTP 429/5xx
+        local retryable=false
+        case "$curl_exit" in
+            6|7|28|35|52|56) retryable=true ;;
+        esac
+        case "$http_code" in
+            429|500|502|503|504) retryable=true ;;
+        esac
+
+        if ! $retryable; then
+            break
+        fi
+
+        attempt=$((attempt + 1))
+        if [ "$attempt" -lt "$max_retries" ]; then
+            log_warn "retry $attempt/$max_retries (HTTP $http_code, curl exit $curl_exit) — waiting ${backoff}s"
+            sleep "$backoff"
+            backoff=$((backoff * 2))
+        fi
+    done
+
+    # Return last output even on failure (callers check exit code)
+    cat "$tmp_out"
+    rm -f "$tmp_out" "$tmp_hdr"
+    return 1
+}
+
 # ── Resolve script directory ──────────────────────────────────────────────────
 
 # Returns the directory where ai-usage scripts live.

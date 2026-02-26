@@ -91,11 +91,10 @@ fi
 
 # Fetch usage data
 log_info "fetching usage data..."
-usage_response=$(curl -sf "$USAGE_URL" \
+usage_response=$(retry_curl -s "$USAGE_URL" \
     -H "Authorization: Bearer $access_token" \
     -H "anthropic-beta: oauth-2025-04-20" \
-    -H "User-Agent: ai-usage-waybar" \
-    2>&1)
+    -H "User-Agent: ai-usage-waybar")
 
 if [ $? -ne 0 ] || [ -z "$usage_response" ]; then
     log_error "usage API request failed: $usage_response"

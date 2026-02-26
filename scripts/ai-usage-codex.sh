@@ -226,7 +226,7 @@ try_api() {
 
     log_info "trying OAuth API fallback..."
     local api_response
-    api_response=$(curl "${curl_args[@]}" 2>&1)
+    api_response=$(retry_curl "${curl_args[@]}")
     if [ $? -ne 0 ] || [ -z "$api_response" ]; then
         log_warn "OAuth API request failed: $api_response"
         return 1
