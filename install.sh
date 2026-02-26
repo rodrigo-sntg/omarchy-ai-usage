@@ -4,12 +4,15 @@ set -e
 # omarchy-ai-usage installer
 # Adds AI usage monitoring (Claude, Codex, Gemini, Antigravity) to Waybar
 
-# Detect script source
-if [ -d "/usr/share/omarchy-ai-usage/scripts" ]; then
+# Detect script source — prefer local repo, fallback to system package
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_DIR/scripts" ]; then
+    SOURCE_DIR="$SCRIPT_DIR/scripts"
+elif [ -d "/usr/share/omarchy-ai-usage/scripts" ]; then
     SOURCE_DIR="/usr/share/omarchy-ai-usage/scripts"
 else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SOURCE_DIR="$SCRIPT_DIR/scripts"
+    echo "  ✗ Scripts not found"
+    exit 1
 fi
 
 LIB_DIR="$HOME/.local/libexec/ai-usage"
