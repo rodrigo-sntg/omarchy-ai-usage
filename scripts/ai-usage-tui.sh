@@ -3,20 +3,25 @@
 # Launched via waybar click: omarchy-launch-floating-terminal-with-presentation
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$HOME/.config/ai-usage/config.json"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+AI_USAGE_PROVIDER="tui"
 
 # ── Ensure config exists ──────────────────────────────────────────────────────
 
 ensure_config() {
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    if [ ! -f "$CONFIG_FILE" ]; then
-        cat > "$CONFIG_FILE" << 'EOF'
+    mkdir -p "$(dirname "$AI_USAGE_CONFIG")"
+    if [ ! -f "$AI_USAGE_CONFIG" ]; then
+        cat > "$AI_USAGE_CONFIG" << 'EOF'
 {
   "display_mode": "icon",
   "refresh_interval": 60,
   "providers": {
     "claude": { "enabled": true },
-    "codex": { "enabled": true }
+    "codex": { "enabled": true },
+    "gemini": { "enabled": true },
+    "antigravity": { "enabled": true }
   }
 }
 EOF
@@ -86,26 +91,55 @@ format_plan() {
 # ── Fetch data ────────────────────────────────────────────────────────────────
 
 fetch_all() {
+    # Visual feedback
+    clear
+    echo ""
+    gum style --foreground 39 --bold "  󰧑  Refreshing AI usage data..."
+    echo "     Please wait while we connect to providers..."
+    echo ""
+
     CLAUDE_JSON=""
     CODEX_JSON=""
+    GEMINI_JSON=""
+    ANTIGRAVITY_JSON=""
     CLAUDE_OK=false
     CODEX_OK=false
+    GEMINI_OK=false
+    ANTIGRAVITY_OK=false
 
-    local claude_enabled codex_enabled
-    claude_enabled=$(jq -r '.providers.claude.enabled // true' "$CONFIG_FILE" 2>/dev/null)
-    codex_enabled=$(jq -r '.providers.codex.enabled // true' "$CONFIG_FILE" 2>/dev/null)
+    local claude_enabled codex_enabled gemini_enabled antigravity_enabled
+    claude_enabled=$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
+    codex_enabled=$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
+    gemini_enabled=$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
+    antigravity_enabled=$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)
+
+    LIBEXEC_DIR=$(resolve_libexec_dir)
 
     if [ "$claude_enabled" = "true" ]; then
-        CLAUDE_JSON=$("$SCRIPT_DIR/ai-usage-claude.sh" 2>/dev/null)
+        CLAUDE_JSON=$("$LIBEXEC_DIR/ai-usage-claude.sh" 2>/dev/null)
         if [ -n "$CLAUDE_JSON" ] && ! echo "$CLAUDE_JSON" | jq -e '.error' &>/dev/null; then
             CLAUDE_OK=true
         fi
     fi
 
     if [ "$codex_enabled" = "true" ]; then
-        CODEX_JSON=$("$SCRIPT_DIR/ai-usage-codex.sh" 2>/dev/null)
+        CODEX_JSON=$("$LIBEXEC_DIR/ai-usage-codex.sh" 2>/dev/null)
         if [ -n "$CODEX_JSON" ] && ! echo "$CODEX_JSON" | jq -e '.error' &>/dev/null; then
             CODEX_OK=true
+        fi
+    fi
+
+    if [ "$gemini_enabled" = "true" ]; then
+        GEMINI_JSON=$("$LIBEXEC_DIR/ai-usage-gemini.sh" 2>/dev/null)
+        if [ -n "$GEMINI_JSON" ] && ! echo "$GEMINI_JSON" | jq -e '.error' &>/dev/null; then
+            GEMINI_OK=true
+        fi
+    fi
+
+    if [ "$antigravity_enabled" = "true" ]; then
+        ANTIGRAVITY_JSON=$("$LIBEXEC_DIR/ai-usage-antigravity.sh" 2>/dev/null)
+        if [ -n "$ANTIGRAVITY_JSON" ] && ! echo "$ANTIGRAVITY_JSON" | jq -e '.error' &>/dev/null; then
+            ANTIGRAVITY_OK=true
         fi
     fi
 }
@@ -175,10 +209,6 @@ render_provider() {
 
 # ── Menu helper: hotkeys + arrow navigation ───────────────────────────────────
 
-# Interactive menu supporting BOTH single-key hotkeys AND arrow navigation.
-# Usage: prompt_choice "hotkey:Label" "hotkey:Label" ...
-# Example: prompt_choice "r:Refresh" "s:Settings" "q:Quit"
-# Returns the hotkey character of the selected item.
 prompt_choice() {
     local -a hotkeys=()
     local -a labels=()
@@ -191,12 +221,10 @@ prompt_choice() {
     local selected=0
     local menu_drawn=0
 
-    # Hide cursor — write to tty, not stdout
     tput civis 2>/dev/null > /dev/tty
 
     draw_menu() {
         {
-            # Move cursor up to overwrite previous menu render
             if [ "$menu_drawn" -eq 1 ]; then
                 printf '\033[%dA' "$count"
             fi
@@ -242,9 +270,6 @@ prompt_choice() {
     done
 }
 
-# ── Waybar signal ─────────────────────────────────────────────────────────────
-
-# Signal 9 in waybar config = SIGRTMIN+9 to the waybar process
 refresh_waybar() {
     pkill -RTMIN+9 waybar 2>/dev/null
 }
@@ -265,14 +290,26 @@ show_dashboard() {
 
     if $CLAUDE_OK; then
         render_provider "$CLAUDE_JSON" "Claude"
-    elif [ "$(jq -r '.providers.claude.enabled // true' "$CONFIG_FILE" 2>/dev/null)" = "true" ]; then
+    elif [ "$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Claude"
     fi
 
     if $CODEX_OK; then
         render_provider "$CODEX_JSON" "Codex"
-    elif [ "$(jq -r '.providers.codex.enabled // true' "$CONFIG_FILE" 2>/dev/null)" = "true" ]; then
+    elif [ "$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
         render_provider '{"error":"fetch failed"}' "Codex"
+    fi
+
+    if $GEMINI_OK; then
+        render_provider "$GEMINI_JSON" "Gemini"
+    elif [ "$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+        render_provider '{"error":"fetch failed"}' "Gemini"
+    fi
+
+    if $ANTIGRAVITY_OK; then
+        render_provider "$ANTIGRAVITY_JSON" "Antigravity"
+    elif [ "$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG" 2>/dev/null)" = "true" ]; then
+        render_provider '{"error":"fetch failed"}' "Antigravity"
     fi
 
     printf '  %bUpdated %s%b\n\n' "$DIM" "$(date '+%H:%M:%S')" "$RESET"
@@ -292,15 +329,19 @@ show_settings() {
         echo ""
 
         local current_mode current_interval
-        current_mode=$(jq -r '.display_mode // "icon"' "$CONFIG_FILE")
-        current_interval=$(jq -r '.refresh_interval // 60' "$CONFIG_FILE")
-        local claude_on codex_on
-        claude_on=$(jq -r '.providers.claude.enabled // true' "$CONFIG_FILE")
-        codex_on=$(jq -r '.providers.codex.enabled // true' "$CONFIG_FILE")
+        current_mode=$(jq -r '.display_mode // "icon"' "$AI_USAGE_CONFIG")
+        current_interval=$(jq -r '.refresh_interval // 60' "$AI_USAGE_CONFIG")
+        local claude_on codex_on gemini_on antigravity_on
+        claude_on=$(jq -r '.providers.claude.enabled // true' "$AI_USAGE_CONFIG")
+        codex_on=$(jq -r '.providers.codex.enabled // true' "$AI_USAGE_CONFIG")
+        gemini_on=$(jq -r '.providers.gemini.enabled // true' "$AI_USAGE_CONFIG")
+        antigravity_on=$(jq -r '.providers.antigravity.enabled // true' "$AI_USAGE_CONFIG")
 
-        local claude_mark codex_mark
+        local claude_mark codex_mark gemini_mark antigravity_mark
         [ "$claude_on" = "true" ] && claude_mark="${GREEN}✓${RESET}" || claude_mark="${RED}✗${RESET}"
         [ "$codex_on" = "true" ] && codex_mark="${GREEN}✓${RESET}" || codex_mark="${RED}✗${RESET}"
+        [ "$gemini_on" = "true" ] && gemini_mark="${GREEN}✓${RESET}" || gemini_mark="${RED}✗${RESET}"
+        [ "$antigravity_on" = "true" ] && antigravity_mark="${GREEN}✓${RESET}" || antigravity_mark="${RED}✗${RESET}"
 
         printf "  ${BOLD}${UNDERLINE}d${RESET}${BOLD}isplay mode:${RESET}  %s\n" "$current_mode"
         printf "  ${BOLD}${UNDERLINE}i${RESET}${BOLD}nterval:${RESET}      %ss\n" "$current_interval"
@@ -308,9 +349,11 @@ show_settings() {
         printf "  ${BOLD}Providers:${RESET}\n"
         printf "  [%b] ${UNDERLINE}c${RESET}laude\n" "$claude_mark"
         printf "  [%b] code${UNDERLINE}x${RESET}\n" "$codex_mark"
+        printf "  [%b] ${UNDERLINE}g${RESET}emini\n" "$gemini_mark"
+        printf "  [%b] ${UNDERLINE}a${RESET}ntigravity\n" "$antigravity_mark"
         echo ""
         local choice
-        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "b:Back")
+        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
 
         case "$choice" in
             d)
@@ -323,7 +366,7 @@ show_settings() {
                 if [ -n "$new_mode" ]; then
                     local tmp
                     tmp=$(mktemp)
-                    jq --arg m "$new_mode" '.display_mode = $m' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+                    jq --arg m "$new_mode" '.display_mode = $m' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
                     refresh_waybar
                 fi
                 ;;
@@ -336,7 +379,7 @@ show_settings() {
                 if [ -n "$new_interval" ]; then
                     local tmp
                     tmp=$(mktemp)
-                    jq --argjson i "$new_interval" '.refresh_interval = $i' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+                    jq --argjson i "$new_interval" '.refresh_interval = $i' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
                     refresh_waybar
                 fi
                 ;;
@@ -345,7 +388,7 @@ show_settings() {
                 [ "$claude_on" = "true" ] && new_val=false || new_val=true
                 local tmp
                 tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.claude.enabled = $v' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+                jq --argjson v "$new_val" '.providers.claude.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
                 refresh_waybar
                 ;;
             x)
@@ -353,7 +396,23 @@ show_settings() {
                 [ "$codex_on" = "true" ] && new_val=false || new_val=true
                 local tmp
                 tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.codex.enabled = $v' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+                jq --argjson v "$new_val" '.providers.codex.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                refresh_waybar
+                ;;
+            g)
+                local new_val
+                [ "$gemini_on" = "true" ] && new_val=false || new_val=true
+                local tmp
+                tmp=$(mktemp)
+                jq --argjson v "$new_val" '.providers.gemini.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                refresh_waybar
+                ;;
+            a)
+                local new_val
+                [ "$antigravity_on" = "true" ] && new_val=false || new_val=true
+                local tmp
+                tmp=$(mktemp)
+                jq --argjson v "$new_val" '.providers.antigravity.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
                 refresh_waybar
                 ;;
             b)
@@ -367,8 +426,6 @@ show_settings() {
 
 main() {
     ensure_config
-
-    # Initial fetch
     fetch_all
 
     while true; do
@@ -379,12 +436,12 @@ main() {
 
         case "$choice" in
             r)
-                rm -f /tmp/ai-usage-cache-claude.json /tmp/ai-usage-cache-codex.json
+                rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
                 ;;
             s)
                 show_settings
-                rm -f /tmp/ai-usage-cache-claude.json /tmp/ai-usage-cache-codex.json
+                rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
                 ;;
             q)

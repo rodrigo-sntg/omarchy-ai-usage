@@ -4,7 +4,15 @@
 # Supports display modes: icon, compact, full
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$HOME/.config/ai-usage/config.json"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+LIB_DIR=$(resolve_libexec_dir)
+
+AI_USAGE_PROVIDER="main"
+CONFIG_FILE="$AI_USAGE_CONFIG"
+
+# Rotate log on each waybar refresh cycle
+rotate_log
 
 # ── Read config ───────────────────────────────────────────────────────────────
 
@@ -49,30 +57,48 @@ round_float() { printf "%.0f" "$1" 2>/dev/null || echo "0"; }
 
 claude_enabled=true
 codex_enabled=true
+gemini_enabled=true
+antigravity_enabled=true
 if [ -f "$CONFIG_FILE" ]; then
-    claude_enabled=$(jq -r '.providers.claude.enabled // true' "$CONFIG_FILE")
-    codex_enabled=$(jq -r '.providers.codex.enabled // true' "$CONFIG_FILE")
+    claude_enabled=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$CONFIG_FILE")
+    codex_enabled=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$CONFIG_FILE")
+    gemini_enabled=$(jq -r 'if .providers.gemini.enabled == null then true else .providers.gemini.enabled end' "$CONFIG_FILE")
+    antigravity_enabled=$(jq -r 'if .providers.antigravity.enabled == null then true else .providers.antigravity.enabled end' "$CONFIG_FILE")
 fi
 
 # ── Fetch provider data ──────────────────────────────────────────────────────
 
 claude_json=""
 codex_json=""
+gemini_json=""
+antigravity_json=""
 claude_ok=false
 codex_ok=false
+gemini_ok=false
+antigravity_ok=false
+
+fetch_provider() {
+    local name="$1" script="$2"
+    local json
+    json=$("$LIB_DIR/$script" 2>/dev/null)
+    if [ -n "$json" ] && ! echo "$json" | jq -e '.error' &>/dev/null; then
+        echo "$json"
+        return 0
+    fi
+    return 1
+}
 
 if [ "$claude_enabled" = "true" ]; then
-    claude_json=$("$SCRIPT_DIR/ai-usage-claude.sh" 2>/dev/null)
-    if [ -n "$claude_json" ] && ! echo "$claude_json" | jq -e '.error' &>/dev/null; then
-        claude_ok=true
-    fi
+    claude_json=$(fetch_provider claude ai-usage-claude.sh) && claude_ok=true
 fi
-
 if [ "$codex_enabled" = "true" ]; then
-    codex_json=$("$SCRIPT_DIR/ai-usage-codex.sh" 2>/dev/null)
-    if [ -n "$codex_json" ] && ! echo "$codex_json" | jq -e '.error' &>/dev/null; then
-        codex_ok=true
-    fi
+    codex_json=$(fetch_provider codex ai-usage-codex.sh) && codex_ok=true
+fi
+if [ "$gemini_enabled" = "true" ]; then
+    gemini_json=$(fetch_provider gemini ai-usage-gemini.sh) && gemini_ok=true
+fi
+if [ "$antigravity_enabled" = "true" ]; then
+    antigravity_json=$(fetch_provider antigravity ai-usage-antigravity.sh) && antigravity_ok=true
 fi
 
 # ── Compute max usage across all providers ────────────────────────────────────
@@ -81,23 +107,43 @@ max_pct=0
 tooltip_lines=()
 
 if $claude_ok; then
-    c7=$(round_float "$(echo "$claude_json" | jq -r '.seven_day // 0')")
-    c5=$(round_float "$(echo "$claude_json" | jq -r '.five_hour // 0')")
-    cr=$(echo "$claude_json" | jq -r '.seven_day_reset // ""')
-    c_bar=$(progress_bar_6 "$c7")
-    tooltip_lines+=("Claude  ${c_bar}  ${c7}%  ↻ $(countdown_from_iso "$cr")")
+    c7=$(round_float "$(echo "$claude_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
+    c5=$(round_float "$(echo "$claude_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
+    cr=$(echo "$claude_json" | jq -r '.five_hour_reset // ""')
+    c_bar=$(progress_bar_6 "$c5")
+    tooltip_lines+=("Claude  ${c_bar}  ${c5}%  ↻ $(countdown_from_iso "$cr")")
     [ "$c7" -gt "$max_pct" ] 2>/dev/null && max_pct=$c7
     [ "$c5" -gt "$max_pct" ] 2>/dev/null && max_pct=$c5
 fi
 
 if $codex_ok; then
-    x7=$(round_float "$(echo "$codex_json" | jq -r '.seven_day // 0')")
-    x5=$(round_float "$(echo "$codex_json" | jq -r '.five_hour // 0')")
-    xr=$(echo "$codex_json" | jq -r '.seven_day_reset // ""')
-    x_bar=$(progress_bar_6 "$x7")
-    tooltip_lines+=("Codex   ${x_bar}  ${x7}%  ↻ $(countdown_from_iso "$xr")")
+    x7=$(round_float "$(echo "$codex_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
+    x5=$(round_float "$(echo "$codex_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
+    xr=$(echo "$codex_json" | jq -r '.five_hour_reset // ""')
+    x_bar=$(progress_bar_6 "$x5")
+    tooltip_lines+=("Codex   ${x_bar}  ${x5}%  ↻ $(countdown_from_iso "$xr")")
     [ "$x7" -gt "$max_pct" ] 2>/dev/null && max_pct=$x7
     [ "$x5" -gt "$max_pct" ] 2>/dev/null && max_pct=$x5
+fi
+
+if $gemini_ok; then
+    g7=$(round_float "$(echo "$gemini_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
+    g5=$(round_float "$(echo "$gemini_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
+    gr=$(echo "$gemini_json" | jq -r '.five_hour_reset // ""')
+    g_bar=$(progress_bar_6 "$g5")
+    tooltip_lines+=("Gemini  ${g_bar}  ${g5}%  ↻ $(countdown_from_iso "$gr")")
+    [ "$g7" -gt "$max_pct" ] 2>/dev/null && max_pct=$g7
+    [ "$g5" -gt "$max_pct" ] 2>/dev/null && max_pct=$g5
+fi
+
+if $antigravity_ok; then
+    a7=$(round_float "$(echo "$antigravity_json" | jq -r 'if .seven_day == null then 0 else .seven_day end')")
+    a5=$(round_float "$(echo "$antigravity_json" | jq -r 'if .five_hour == null then 0 else .five_hour end')")
+    ar=$(echo "$antigravity_json" | jq -r '.five_hour_reset // ""')
+    a_bar=$(progress_bar_6 "$a5")
+    tooltip_lines+=("Antigr  ${a_bar}  ${a5}%  ↻ $(countdown_from_iso "$ar")")
+    [ "$a7" -gt "$max_pct" ] 2>/dev/null && max_pct=$a7
+    [ "$a5" -gt "$max_pct" ] 2>/dev/null && max_pct=$a5
 fi
 
 # ── CSS class ─────────────────────────────────────────────────────────────────
@@ -108,7 +154,7 @@ else class="ai-ok"; fi
 
 # ── Build output based on display mode ────────────────────────────────────────
 
-if ! $claude_ok && ! $codex_ok; then
+if ! $claude_ok && ! $codex_ok && ! $gemini_ok && ! $antigravity_ok; then
     jq -n -c '{"text":"󰧑 ?","tooltip":"AI Usage: No data available\nCheck credentials","class":"ai-warn"}'
     exit 0
 fi
@@ -125,15 +171,15 @@ case "$DISPLAY_MODE" in
         text="󰧑"
         ;;
     compact)
-        # Show icon + bar of the worst provider
         worst_bar=$(progress_bar_6 "$max_pct")
         text="󰧑 ${worst_bar}"
         ;;
     full)
-        # Show icon + bars for all providers
         text_parts=()
         $claude_ok && text_parts+=("󰧑 $c_bar")
         $codex_ok && text_parts+=("󰧑 $x_bar")
+        $gemini_ok && text_parts+=("󰧑 $g_bar")
+        $antigravity_ok && text_parts+=("󰧑 $a_bar")
         text=""
         for (( i=0; i<${#text_parts[@]}; i++ )); do
             [ $i -gt 0 ] && text+="  "

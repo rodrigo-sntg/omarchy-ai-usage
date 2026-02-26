@@ -6,8 +6,12 @@
 # Output: JSON with provider, five_hour, five_hour_reset, seven_day,
 #         seven_day_reset, plan, and source fields.
 
-CACHE_FILE="/tmp/ai-usage-cache-codex.json"
-CACHE_MAX_AGE=55  # seconds
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+AI_USAGE_PROVIDER="codex"
+CACHE_FILE="$AI_USAGE_CACHE_DIR/ai-usage-cache-codex.json"
 AUTH_FILE="$HOME/.codex/auth.json"
 CODEX_BIN="$HOME/.local/bin/codex"
 USAGE_API_URL="https://chatgpt.com/backend-api/wham/usage"
@@ -16,19 +20,7 @@ USAGE_API_URL="https://chatgpt.com/backend-api/wham/usage"
 RPC_REQUEST_TIMEOUT=5   # seconds to wait for each RPC response
 RPC_TOTAL_TIMEOUT=15    # total seconds for entire RPC attempt
 
-error_exit() {
-    echo "{\"error\":\"$1\",\"provider\":\"codex\"}"
-    exit 1
-}
-
-# Check cache
-if [ -f "$CACHE_FILE" ]; then
-    cache_age=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE") ))
-    if [ "$cache_age" -lt "$CACHE_MAX_AGE" ]; then
-        cat "$CACHE_FILE"
-        exit 0
-    fi
-fi
+check_cache "$CACHE_FILE"
 
 # Helper: convert unix timestamp (seconds) to ISO 8601
 unix_to_iso() {
@@ -41,7 +33,6 @@ unix_to_iso() {
 }
 
 # Helper: build output JSON from RPC-style data
-# Args: primary_pct primary_reset_ts secondary_pct secondary_reset_ts plan_type source
 build_output() {
     local primary_pct="${1:-0}"
     local primary_reset="${2:-}"
@@ -50,8 +41,7 @@ build_output() {
     local plan="${5:-unknown}"
     local source="$6"
 
-    local primary_iso
-    local secondary_iso
+    local primary_iso secondary_iso
     primary_iso=$(unix_to_iso "$primary_reset")
     secondary_iso=$(unix_to_iso "$secondary_reset")
 
@@ -78,6 +68,7 @@ build_output() {
 try_rpc() {
     # Check codex binary exists
     if [ ! -x "$CODEX_BIN" ]; then
+        log_warn "codex binary not found at $CODEX_BIN"
         return 1
     fi
 
@@ -103,7 +94,7 @@ try_rpc() {
     trap cleanup_rpc RETURN
 
     # Start codex app-server with stdin/stdout from FIFOs
-    # Use timeout to prevent indefinite hangs
+    log_info "starting codex app-server RPC..."
     timeout "$RPC_TOTAL_TIMEOUT" "$CODEX_BIN" app-server < "$fifo_in" > "$fifo_out" 2>/dev/null &
     codex_pid=$!
 
@@ -118,6 +109,7 @@ try_rpc() {
     local init_response
     init_response=$(timeout "$RPC_REQUEST_TIMEOUT" head -n 1 < "$fifo_out" 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$init_response" ]; then
+        log_warn "RPC initialize timeout"
         exec 3>&-
         return 1
     fi
@@ -126,6 +118,7 @@ try_rpc() {
     local init_id
     init_id=$(echo "$init_response" | jq -r '.id // empty' 2>/dev/null)
     if [ "$init_id" != "1" ]; then
+        log_warn "RPC unexpected init response id: $init_id"
         exec 3>&-
         return 1
     fi
@@ -145,6 +138,7 @@ try_rpc() {
         local line
         line=$(timeout "$RPC_REQUEST_TIMEOUT" head -n 1 < "$fifo_out" 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$line" ]; then
+            log_warn "RPC rateLimits read timeout (attempt $attempts)"
             exec 3>&-
             return 1
         fi
@@ -162,6 +156,7 @@ try_rpc() {
     exec 3>&-
 
     if [ -z "$rate_response" ]; then
+        log_warn "RPC never received id:2 response"
         return 1
     fi
 
@@ -169,6 +164,7 @@ try_rpc() {
     local rpc_error
     rpc_error=$(echo "$rate_response" | jq -r '.error // empty' 2>/dev/null)
     if [ -n "$rpc_error" ]; then
+        log_warn "RPC error: $rpc_error"
         return 1
     fi
 
@@ -176,6 +172,7 @@ try_rpc() {
     local result
     result=$(echo "$rate_response" | jq '.result' 2>/dev/null)
     if [ -z "$result" ] || [ "$result" = "null" ]; then
+        log_warn "RPC result is null or empty"
         return 1
     fi
 
@@ -188,6 +185,7 @@ try_rpc() {
 
     rpc_result=$(build_output "$primary_pct" "$primary_reset" "$secondary_pct" "$secondary_reset" "$plan_type" "rpc")
     if [ -n "$rpc_result" ]; then
+        log_info "RPC succeeded"
         echo "$rpc_result"
         return 0
     fi
@@ -198,6 +196,7 @@ try_rpc() {
 
 try_api() {
     if [ ! -f "$AUTH_FILE" ]; then
+        log_warn "auth file not found: $AUTH_FILE"
         return 1
     fi
 
@@ -215,6 +214,7 @@ try_api() {
     elif [ -n "$api_key" ]; then
         token="$api_key"
     else
+        log_warn "no token found in $AUTH_FILE"
         return 1
     fi
 
@@ -224,9 +224,11 @@ try_api() {
         curl_args+=(-H "ChatGPT-Account-Id: $account_id")
     fi
 
+    log_info "trying OAuth API fallback..."
     local api_response
-    api_response=$(curl "${curl_args[@]}" 2>/dev/null)
+    api_response=$(curl "${curl_args[@]}" 2>&1)
     if [ $? -ne 0 ] || [ -z "$api_response" ]; then
+        log_warn "OAuth API request failed: $api_response"
         return 1
     fi
 
@@ -234,11 +236,11 @@ try_api() {
     local api_error
     api_error=$(echo "$api_response" | jq -r '.error // .detail // empty' 2>/dev/null)
     if [ -n "$api_error" ]; then
+        log_warn "OAuth API error: $api_error"
         return 1
     fi
 
     # Parse the OAuth API response
-    # Format: { "rate_limit": { "primary_window": { "used_percent": int, "reset_at": unix_int, ... }, "secondary_window": { ... } } }
     local primary_pct secondary_pct primary_reset secondary_reset
     primary_pct=$(echo "$api_response" | jq '.rate_limit.primary_window.used_percent // 0' 2>/dev/null)
     primary_reset=$(echo "$api_response" | jq '.rate_limit.primary_window.reset_at // 0' 2>/dev/null)
@@ -248,6 +250,7 @@ try_api() {
     local api_result
     api_result=$(build_output "$primary_pct" "$primary_reset" "$secondary_pct" "$secondary_reset" "plus" "api")
     if [ -n "$api_result" ]; then
+        log_info "OAuth API succeeded"
         echo "$api_result"
         return 0
     fi
@@ -256,21 +259,17 @@ try_api() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-cache_and_exit() {
-    echo "$1" > "$CACHE_FILE"
-    cat "$CACHE_FILE"
-    exit 0
-}
-
 # Try Method 1: RPC
-if rpc_output=$(try_rpc 2>/dev/null) && [ -n "$rpc_output" ]; then
-    cache_and_exit "$rpc_output"
+if rpc_output=$(try_rpc) && [ -n "$rpc_output" ]; then
+    cache_output "$CACHE_FILE" "$rpc_output"
+    exit 0
 fi
 
 # Try Method 2: OAuth API
-if api_output=$(try_api 2>/dev/null) && [ -n "$api_output" ]; then
-    cache_and_exit "$api_output"
+if api_output=$(try_api) && [ -n "$api_output" ]; then
+    cache_output "$CACHE_FILE" "$api_output"
+    exit 0
 fi
 
 # Both methods failed
-error_exit "both RPC and API methods failed"
+error_json "both RPC and API methods failed"

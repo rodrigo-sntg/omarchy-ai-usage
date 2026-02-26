@@ -3,21 +3,29 @@ set -e
 
 # omarchy-ai-usage uninstaller
 
+LIBEXEC_DIR="$HOME/.local/libexec/ai-usage"
 WAYBAR_SCRIPTS="$HOME/.config/waybar/scripts"
 WAYBAR_CONFIG="$HOME/.config/waybar/config.jsonc"
 WAYBAR_STYLE="$HOME/.config/waybar/style.css"
 AI_CONFIG_DIR="$HOME/.config/ai-usage"
+AI_CACHE_DIR="$HOME/.cache/ai-usage"
 
 echo ""
 echo "  󰧑  omarchy-ai-usage uninstaller"
 echo "  ─────────────────────────────────"
 echo ""
 
-# ── Remove scripts ────────────────────────────────────────────────────────────
+# ── Remove libexec scripts ───────────────────────────────────────────────────
 
-echo "  Removing scripts..."
+if [ -d "$LIBEXEC_DIR" ]; then
+    rm -rf "$LIBEXEC_DIR"
+    echo "  ✓ Scripts removed ($LIBEXEC_DIR)"
+fi
+
+# ── Remove waybar wrappers ───────────────────────────────────────────────────
+
 rm -f "$WAYBAR_SCRIPTS"/ai-usage*.sh
-echo "  ✓ Scripts removed"
+echo "  ✓ Waybar wrappers removed"
 
 # ── Remove waybar module ──────────────────────────────────────────────────────
 
@@ -85,10 +93,15 @@ with open('$tmp', 'w') as f:
     fi
 fi
 
-# ── Remove cache ──────────────────────────────────────────────────────────────
+# ── Remove cache and logs ────────────────────────────────────────────────────
 
 rm -f /tmp/ai-usage-cache-*.json
-echo "  ✓ Cache cleared"
+if [ -d "$AI_CACHE_DIR" ]; then
+    rm -rf "$AI_CACHE_DIR"
+    echo "  ✓ Cache and logs removed ($AI_CACHE_DIR)"
+else
+    echo "  ✓ Cache cleared"
+fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
