@@ -9,15 +9,23 @@ Inspired by [CodexBar](https://github.com/steipete/CodexBar) (macOS).
 - **Waybar icon** that changes color based on usage (green/yellow/red)
 - **Tooltip** with compact overview of all providers on hover
 - **Interactive TUI** (click) with detailed usage bars, reset countdowns, and settings
+- **Usage history** with sparkline visualization (▁▂▃▄▅▆▇█) — tracks usage over time
+- **Desktop notifications** when usage exceeds thresholds (80%/95%) with cooldown
+- **Clipboard export** — copy usage report via `wl-copy`, `xclip`, or `xsel`
+- **Auto dark/light theme** — detects GTK theme, supports Catppuccin Latte/Mocha palettes
+- **Log viewer** in TUI — filter by provider or severity
 - **Configurable** display modes: icon-only, compact, or full bars
-- **Keyboard shortcuts** throughout the TUI
+- **Configurable cache TTL** — adjust how long provider data is cached
+- **Keyboard shortcuts** throughout the TUI (hotkeys + arrow navigation)
+- **Retry with exponential backoff** for transient API failures
+- **Better error messages** with actionable hints
 - **Centralized logging** to `~/.cache/ai-usage/ai-usage.log`
 - **Diagnostic command** (`make check`) to validate setup
+- **Automated tests** — 70 tests covering lib, config, and providers
 - Automatic token refresh for Claude OAuth and Gemini OAuth
 - Codex support via JSON-RPC (app-server) with OAuth API fallback
 - Gemini support via Gemini CLI OAuth credentials and Google quota API
 - Antigravity support via local language server probe (experimental)
-- 55-second cache to minimize API calls
 - Atomic file writes to prevent corruption
 
 ## Supported Providers
@@ -65,12 +73,13 @@ make uninstall
 
 ```
 ~/.local/libexec/ai-usage/          ← All scripts (XDG compliant)
-  ├── lib.sh                        ← Shared library (logging, cache, errors)
+  ├── lib.sh                        ← Shared library (logging, cache, errors, retry, countdown)
   ├── ai-usage.sh                   ← Main waybar module
   ├── ai-usage-claude.sh            ← Claude provider
   ├── ai-usage-codex.sh             ← Codex provider
   ├── ai-usage-gemini.sh            ← Gemini provider
   ├── ai-usage-antigravity.sh       ← Antigravity provider
+  ├── ai-usage-history.sh           ← Usage history tracking & sparklines
   ├── ai-usage-tui.sh               ← Interactive TUI
   └── ai-usage-check.sh             ← Diagnostic tool
 
@@ -80,6 +89,7 @@ make uninstall
 
 ~/.config/ai-usage/config.json       ← User configuration
 ~/.cache/ai-usage/ai-usage.log       ← Centralized log file
+~/.cache/ai-usage/history/           ← Usage history (JSONL per provider)
 ```
 
 ## Configuration
@@ -90,6 +100,14 @@ Edit `~/.config/ai-usage/config.json` or use the TUI settings (click the icon �
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "cache_ttl_seconds": 55,
+  "notifications_enabled": true,
+  "notify_warn_threshold": 80,
+  "notify_critical_threshold": 95,
+  "notify_cooldown_minutes": 15,
+  "history_enabled": true,
+  "history_retention_days": 7,
+  "theme": "auto",
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -107,13 +125,35 @@ Edit `~/.config/ai-usage/config.json` or use the TUI settings (click the icon �
 | `compact` | Icon + progress bar of worst provider |
 | `full` | Icon + progress bars for all providers |
 
+### Theme
+
+| Value | Description |
+|-------|-------------|
+| `auto` | Detect from GTK settings (default) |
+| `dark` | Force dark theme (Catppuccin Mocha) |
+| `light` | Force light theme (Catppuccin Latte) |
+
+### Notifications
+
+Desktop notifications via `notify-send` when any provider's 5-hour usage crosses the warning or critical thresholds. A cooldown prevents repeated alerts.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `notifications_enabled` | `true` | Enable/disable notifications |
+| `notify_warn_threshold` | `80` | Warning notification at this % |
+| `notify_critical_threshold` | `95` | Critical notification at this % |
+| `notify_cooldown_minutes` | `15` | Minimum minutes between alerts per provider |
+
 ## TUI Shortcuts
 
 ### Dashboard
 | Key | Action |
 |-----|--------|
 | `r` | Refresh data |
+| `h` | View usage history (sparklines) |
+| `c` | Copy usage report to clipboard |
 | `s` | Open settings |
+| `l` | View logs |
 | `q` | Quit |
 
 ### Settings
@@ -121,11 +161,22 @@ Edit `~/.config/ai-usage/config.json` or use the TUI settings (click the icon �
 |-----|--------|
 | `d` | Change display mode |
 | `i` | Change refresh interval |
+| `t` | Change cache TTL |
+| `e` | Change theme (auto/dark/light) |
+| `n` | Toggle notifications |
 | `c` | Toggle Claude |
 | `x` | Toggle Codex |
 | `g` | Toggle Gemini |
 | `a` | Toggle Antigravity |
 | `b` | Back to dashboard |
+
+### Log Viewer
+| Key | Action |
+|-----|--------|
+| `a` | All logs |
+| `e` | Errors only |
+| `p` | Filter by provider |
+| `b` | Back |
 
 ## Diagnostics
 
@@ -141,10 +192,21 @@ This checks dependencies, credential files, network connectivity, and running se
 
 Logs are written to `~/.cache/ai-usage/ai-usage.log` (auto-rotated, max 1000 lines).
 
+## Testing
+
+```bash
+make test
+# or directly:
+bash tests/run-all.sh
+```
+
+Runs 70 automated tests covering the shared library, config handling, provider JSON contract, and waybar output formatting.
+
 ## Development
 
 ```bash
 make lint     # Run shellcheck on all scripts
+make test     # Run automated tests
 make check    # Run diagnostic checks
 make install  # Install locally
 ```
@@ -157,6 +219,12 @@ make install  # Install locally
 - Codex CLI logged in (`codex login`)
 - Gemini CLI logged in (`gemini auth`) — for Gemini provider
 - Antigravity app running — for Antigravity provider (experimental)
+
+### Optional
+
+- `libnotify` — for desktop notifications (`notify-send`)
+- `wl-clipboard` — for clipboard export on Wayland (`wl-copy`)
+- `xclip` / `xsel` — for clipboard export on X11
 
 ## About
 

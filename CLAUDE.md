@@ -8,12 +8,13 @@ AI usage monitoring for Omarchy — track Claude, Codex, Gemini, and Antigravity
 XDG-compliant layout:
 
 ~/.local/libexec/ai-usage/          ← All scripts installed here
-  ├── lib.sh                        ← Shared library (logging, cache, errors, atomic writes)
+  ├── lib.sh                        ← Shared library (logging, cache, errors, retry, countdown)
   ├── ai-usage.sh                   ← Main waybar module, outputs JSON for waybar
   │     ├── ai-usage-claude.sh      ← Claude provider (OAuth token refresh)
   │     ├── ai-usage-codex.sh       ← Codex provider (JSON-RPC + OAuth fallback)
   │     ├── ai-usage-gemini.sh      ← Gemini provider (Google quota API)
   │     └── ai-usage-antigravity.sh ← Antigravity provider (local LSP probe)
+  ├── ai-usage-history.sh           ← Usage history tracking & sparkline generation
   ├── ai-usage-tui.sh               ← Interactive dashboard (gum + custom prompt_choice)
   └── ai-usage-check.sh             ← Diagnostic tool (validates deps, creds, network)
 
@@ -21,9 +22,10 @@ XDG-compliant layout:
   ├── ai-usage.sh
   └── ai-usage-tui.sh
 
-Config: ~/.config/ai-usage/config.json
-Cache:  ~/.cache/ai-usage/cache/ai-usage-cache-{claude,codex,gemini,antigravity}.json (55s TTL)
-Log:    ~/.cache/ai-usage/ai-usage.log (auto-rotated, max 1000 lines)
+Config:   ~/.config/ai-usage/config.json
+Cache:    ~/.cache/ai-usage/cache/ai-usage-cache-{claude,codex,gemini,antigravity}.json (configurable TTL)
+History:  ~/.cache/ai-usage/history/{claude,codex,gemini,antigravity}.jsonl
+Log:      ~/.cache/ai-usage/ai-usage.log (auto-rotated, max 1000 lines)
 ```
 
 ## File Inventory
@@ -32,13 +34,14 @@ Log:    ~/.cache/ai-usage/ai-usage.log (auto-rotated, max 1000 lines)
 
 | File | Description |
 |------|-------------|
-| `lib.sh` | Shared library. Functions: `log_info/warn/error`, `error_json`, `check_cache`, `atomic_write`, `cache_output`, `rotate_log`, `resolve_libexec_dir`. All providers source this. |
-| `ai-usage.sh` | Main waybar module. Reads config, calls provider scripts, outputs `{"text","tooltip","class"}` JSON. Supports 3 display modes (icon/compact/full). |
+| `lib.sh` | Shared library. Functions: `log_info/warn/error`, `error_json` (with hints), `get_config_value`, `check_cache` (configurable TTL), `atomic_write`, `cache_output`, `rotate_log`, `format_countdown`, `retry_curl` (exponential backoff), `resolve_libexec_dir`. All providers source this. |
+| `ai-usage.sh` | Main waybar module. Reads config, calls provider scripts, records history, sends notifications, detects theme, outputs `{"text","tooltip","class"}` JSON. Supports 3 display modes (icon/compact/full). |
 | `ai-usage-claude.sh` | Claude provider. OAuth token from `~/.claude/.credentials.json` (field `claudeAiOauth`). Auto-refreshes expired tokens via `POST https://platform.claude.com/v1/oauth/token`. Calls `GET https://api.anthropic.com/api/oauth/usage`. |
 | `ai-usage-codex.sh` | Codex provider. Primary: JSON-RPC via FIFOs to `codex app-server` (method `account/rateLimits/read`). Fallback: OAuth API from `~/.codex/auth.json`. 15s timeout on RPC. |
 | `ai-usage-gemini.sh` | Gemini provider. OAuth from `~/.gemini/oauth_creds.json`. Extracts client_id/secret from Gemini CLI, auto-refreshes tokens via Google OAuth. Fetches quota via `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`. |
 | `ai-usage-antigravity.sh` | Antigravity provider (experimental). Detects local language server process via `ps`, discovers ports via `ss`/`lsof`, probes Connect protocol endpoints for quota data. No external auth needed. |
-| `ai-usage-tui.sh` | Interactive TUI. Uses `gum style` for headers. Custom `prompt_choice()` function for menus with both hotkey and arrow navigation. Dashboard + settings screens. |
+| `ai-usage-history.sh` | Usage history tracking. Functions: `record_snapshot` (appends JSONL), `get_sparkline` (generates sparkline from history). Sourced by `ai-usage.sh` and `ai-usage-tui.sh`. |
+| `ai-usage-tui.sh` | Interactive TUI. Uses `gum style` for headers. Custom `prompt_choice()` function for menus with both hotkey and arrow navigation. Dashboard, settings, history, log viewer, clipboard export, and theme switching. |
 | `ai-usage-check.sh` | Diagnostic tool. Validates dependencies, credentials, network connectivity, and provider reachability. Color-coded pass/fail/warn output. |
 
 ### Distribution
@@ -47,11 +50,16 @@ Log:    ~/.cache/ai-usage/ai-usage.log (auto-rotated, max 1000 lines)
 |------|-------------|
 | `install.sh` | Main installer. Copies scripts to `~/.local/libexec/ai-usage/`, creates waybar wrappers, registers module, adds CSS. |
 | `uninstall.sh` | Removes libexec dir, wrappers, waybar module, CSS, cache, logs. Prompts for config removal. |
-| `Makefile` | Standard targets: `install`, `uninstall`, `lint`, `check`. |
+| `Makefile` | Standard targets: `install`, `uninstall`, `lint`, `check`, `test`. |
 | `PKGBUILD` | AUR package definition. |
 | `.install` | Pacman post-install hook. Runs `omarchy-ai-usage-setup` for user-level waybar integration. |
-| `VERSION` | Single-line version string (e.g. `1.0.0`). |
+| `VERSION` | Single-line version string (e.g. `1.1.0`). |
 | `CHANGELOG.md` | Documents all changes per version. |
+| `tests/run-all.sh` | Test runner — executes all test suites. |
+| `tests/test-helpers.sh` | Test framework: `assert_eq`, `assert_contains`, `assert_json_valid`, etc. |
+| `tests/test-lib.sh` | 20 tests for `lib.sh` (logging, cache, atomic writes, countdown, etc.) |
+| `tests/test-config.sh` | 14 tests for config creation, parsing, modification, fallback defaults. |
+| `tests/test-providers.sh` | 36 tests for provider JSON contract, waybar output, progress bar, CSS thresholds. |
 
 ## API Details
 
@@ -98,19 +106,30 @@ All provider scripts source `lib.sh` for shared functionality:
 | Function | Purpose |
 |----------|---------|
 | `log_info/warn/error MSG` | Timestamped log to `~/.cache/ai-usage/ai-usage.log` |
-| `error_json MSG` | Print `{"error","provider"}` JSON and exit 1 |
-| `check_cache FILE` | If cache is fresh (< 55s), print and exit |
+| `error_json MSG [HINT]` | Print `{"error","provider"}` JSON (jq-safe) and exit 1. Optional hint appended. |
+| `get_config_value KEY DEFAULT` | Read a config value from `config.json` with fallback |
+| `check_cache FILE` | If cache is fresh (configurable TTL via `AI_USAGE_CACHE_TTL`), print and exit |
 | `atomic_write FILE CONTENT` | Write via temp file + `mv` (crash-safe) |
 | `cache_output FILE CONTENT` | `atomic_write` + print |
 | `rotate_log` | Trim log to last 1000 lines |
+| `format_countdown ISO_DATE` | Convert ISO timestamp to human-readable "Xh Ym" countdown |
+| `retry_curl [--retries N] ARGS...` | Curl with exponential backoff + jitter. Default 3 retries. |
 | `resolve_libexec_dir` | Returns `~/.local/libexec/ai-usage` or `scripts/` in dev |
 
 ## Config Format
 
 ```json
 {
-  "display_mode": "icon",        // "icon" | "compact" | "full"
-  "refresh_interval": 60,        // seconds (for waybar)
+  "display_mode": "icon",              // "icon" | "compact" | "full"
+  "refresh_interval": 60,             // seconds (for waybar)
+  "cache_ttl_seconds": 55,            // provider cache lifetime
+  "notifications_enabled": true,       // desktop notifications
+  "notify_warn_threshold": 80,         // warn at this %
+  "notify_critical_threshold": 95,     // critical at this %
+  "notify_cooldown_minutes": 15,       // min minutes between alerts
+  "history_enabled": true,             // track usage over time
+  "history_retention_days": 7,         // days to keep history
+  "theme": "auto",                     // "auto" | "dark" | "light"
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
