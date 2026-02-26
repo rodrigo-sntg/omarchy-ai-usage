@@ -364,9 +364,9 @@ show_settings() {
                     --header "Select display mode:" \
                     --selected "$current_mode")
                 if [ -n "$new_mode" ]; then
-                    local tmp
-                    tmp=$(mktemp)
-                    jq --arg m "$new_mode" '.display_mode = $m' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                    local updated
+                    updated=$(jq --arg m "$new_mode" '.display_mode = $m' "$AI_USAGE_CONFIG")
+                    atomic_write "$AI_USAGE_CONFIG" "$updated"
                     refresh_waybar
                 fi
                 ;;
@@ -377,42 +377,42 @@ show_settings() {
                     --item.foreground 255 \
                     --header "Refresh interval (seconds):")
                 if [ -n "$new_interval" ]; then
-                    local tmp
-                    tmp=$(mktemp)
-                    jq --argjson i "$new_interval" '.refresh_interval = $i' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                    local updated
+                    updated=$(jq --argjson i "$new_interval" '.refresh_interval = $i' "$AI_USAGE_CONFIG")
+                    atomic_write "$AI_USAGE_CONFIG" "$updated"
                     refresh_waybar
                 fi
                 ;;
             c)
                 local new_val
                 [ "$claude_on" = "true" ] && new_val=false || new_val=true
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.claude.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                local updated
+                updated=$(jq --argjson v "$new_val" '.providers.claude.enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
                 refresh_waybar
                 ;;
             x)
                 local new_val
                 [ "$codex_on" = "true" ] && new_val=false || new_val=true
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.codex.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                local updated
+                updated=$(jq --argjson v "$new_val" '.providers.codex.enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
                 refresh_waybar
                 ;;
             g)
                 local new_val
                 [ "$gemini_on" = "true" ] && new_val=false || new_val=true
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.gemini.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                local updated
+                updated=$(jq --argjson v "$new_val" '.providers.gemini.enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
                 refresh_waybar
                 ;;
             a)
                 local new_val
                 [ "$antigravity_on" = "true" ] && new_val=false || new_val=true
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson v "$new_val" '.providers.antigravity.enabled = $v' "$AI_USAGE_CONFIG" > "$tmp" && mv "$tmp" "$AI_USAGE_CONFIG"
+                local updated
+                updated=$(jq --argjson v "$new_val" '.providers.antigravity.enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
                 refresh_waybar
                 ;;
             b)
