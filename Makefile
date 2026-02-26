@@ -1,4 +1,4 @@
-.PHONY: install uninstall lint check help
+.PHONY: install uninstall lint check test help
 
 SHELL := /bin/bash
 
@@ -15,6 +15,9 @@ uninstall: ## Uninstall ai-usage and clean up
 lint: ## Run shellcheck on all scripts
 	@echo "Running shellcheck..."
 	@shellcheck -x scripts/*.sh && echo "All scripts passed shellcheck ✓"
+
+test: ## Run automated test suite
+	@bash tests/run-all.sh
 
 check: ## Run diagnostic checks (dependencies, credentials, network)
 	@bash scripts/ai-usage-check.sh
