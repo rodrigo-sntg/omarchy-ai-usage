@@ -86,6 +86,13 @@ if [ ! -f "$AI_CONFIG" ]; then
   "display_mode": "icon",
   "refresh_interval": 60,
   "cache_ttl_seconds": 55,
+  "notifications_enabled": true,
+  "notify_warn_threshold": 80,
+  "notify_critical_threshold": 95,
+  "notify_cooldown_minutes": 15,
+  "history_enabled": true,
+  "history_retention_days": 7,
+  "theme": "auto",
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -174,7 +181,12 @@ content += '}\n\n'
 content += '#custom-ai-usage.ai-ok { color: #a6e3a1; }\n'
 content += '#custom-ai-usage.ai-warn { color: #FFC107; }\n'
 content += '#custom-ai-usage.ai-crit { color: #D35F5F; }\n'
-content += '#custom-ai-usage:hover { color: #e68e0d; }\n'
+content += '#custom-ai-usage:hover { color: #e68e0d; }\n\n'
+content += '/* Light theme overrides */\n'
+content += '#custom-ai-usage.ai-usage-light.ai-ok { color: #40a02b; }\n'
+content += '#custom-ai-usage.ai-usage-light.ai-warn { color: #df8e1d; }\n'
+content += '#custom-ai-usage.ai-usage-light.ai-crit { color: #d20f39; }\n'
+content += '#custom-ai-usage.ai-usage-light:hover { color: #fe640b; }\n'
 
 with open('$tmp_css', 'w') as f:
     f.write(content)

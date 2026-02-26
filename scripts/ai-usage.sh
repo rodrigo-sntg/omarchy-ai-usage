@@ -6,6 +6,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=ai-usage-history.sh
+source "$SCRIPT_DIR/ai-usage-history.sh"
 LIB_DIR=$(resolve_libexec_dir)
 
 AI_USAGE_PROVIDER="main"
@@ -17,9 +19,13 @@ rotate_log
 # ── Read config ───────────────────────────────────────────────────────────────
 
 DISPLAY_MODE="icon"
+HISTORY_ENABLED="true"
 if [ -f "$CONFIG_FILE" ]; then
     DISPLAY_MODE=$(jq -r '.display_mode // "icon"' "$CONFIG_FILE")
+    HISTORY_ENABLED=$(jq -r '.history_enabled // true' "$CONFIG_FILE")
 fi
+export AI_USAGE_HISTORY_RETENTION
+AI_USAGE_HISTORY_RETENTION=$(jq -r '.history_retention_days // 7' "$CONFIG_FILE" 2>/dev/null || echo 7)
 
 # Export cache TTL so provider subprocesses inherit it
 export AI_USAGE_CACHE_TTL
@@ -92,6 +98,23 @@ if [ "$antigravity_enabled" = "true" ]; then
     antigravity_json=$(fetch_provider antigravity ai-usage-antigravity.sh) && antigravity_ok=true
 fi
 
+# Record history snapshots
+if [ "$HISTORY_ENABLED" = "true" ]; then
+    _record() {
+        local ok="$1" json="$2" name="$3"
+        if $ok; then
+            local fh sd
+            fh=$(echo "$json" | jq -r '.five_hour // 0')
+            sd=$(echo "$json" | jq -r '.seven_day // 0')
+            record_snapshot "$name" "$fh" "$sd"
+        fi
+    }
+    _record "$claude_ok" "$claude_json" "claude"
+    _record "$codex_ok" "$codex_json" "codex"
+    _record "$gemini_ok" "$gemini_json" "gemini"
+    _record "$antigravity_ok" "$antigravity_json" "antigravity"
+fi
+
 # ── Compute max usage across all providers ────────────────────────────────────
 
 max_pct=0
@@ -141,11 +164,80 @@ if $antigravity_ok; then
     [ "$a5" -gt "$max_pct" ] 2>/dev/null && max_pct=$a5
 fi
 
+# ── Notifications ────────────────────────────────────────────────────────────
+
+NOTIFY_STATE_FILE="$AI_USAGE_CACHE_DIR/notify-state.json"
+
+NOTIFY_ENABLED="true"
+NOTIFY_WARN_THRESH=80
+NOTIFY_CRIT_THRESH=95
+NOTIFY_COOLDOWN_MIN=15
+if [ -f "$CONFIG_FILE" ]; then
+    NOTIFY_ENABLED=$(jq -r '.notifications_enabled // true' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_WARN_THRESH=$(jq -r '.notify_warn_threshold // 80' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_CRIT_THRESH=$(jq -r '.notify_critical_threshold // 95' "$CONFIG_FILE" 2>/dev/null)
+    NOTIFY_COOLDOWN_MIN=$(jq -r '.notify_cooldown_minutes // 15' "$CONFIG_FILE" 2>/dev/null)
+fi
+
+_send_notification() {
+    local provider="$1" pct="$2" reset_info="$3"
+
+    [ "$pct" -lt "$NOTIFY_WARN_THRESH" ] 2>/dev/null && return
+
+    local now last_time cooldown_s
+    now=$(date +%s)
+    cooldown_s=$((NOTIFY_COOLDOWN_MIN * 60))
+    if [ -f "$NOTIFY_STATE_FILE" ]; then
+        last_time=$(jq -r ".${provider}_last // 0" "$NOTIFY_STATE_FILE" 2>/dev/null)
+        if [ $((now - last_time)) -lt "$cooldown_s" ]; then
+            return
+        fi
+    fi
+
+    local urgency="normal"
+    [ "$pct" -ge "$NOTIFY_CRIT_THRESH" ] 2>/dev/null && urgency="critical"
+
+    notify-send -u "$urgency" -a "AI Usage" \
+        "AI Usage Alert" \
+        "${provider^} usage at ${pct}% — resets in ${reset_info}" 2>/dev/null
+
+    local state="{}"
+    [ -f "$NOTIFY_STATE_FILE" ] && state=$(cat "$NOTIFY_STATE_FILE" 2>/dev/null)
+    state=$(echo "$state" | jq --argjson t "$now" ".${provider}_last = \$t" 2>/dev/null)
+    if [ -n "$state" ]; then
+        atomic_write "$NOTIFY_STATE_FILE" "$state"
+    else
+        log_warn "failed to update notification state for $provider"
+    fi
+}
+
+if [ "$NOTIFY_ENABLED" = "true" ] && command -v notify-send &>/dev/null; then
+    $claude_ok && _send_notification "claude" "$c5" "$(format_countdown "$c5r")"
+    $codex_ok && _send_notification "codex" "$x5" "$(format_countdown "$x5r")"
+    $gemini_ok && _send_notification "gemini" "$g5" "$(format_countdown "$g5r")"
+    $antigravity_ok && _send_notification "antigravity" "$a5" "$(format_countdown "$a5r")"
+fi
+
 # ── CSS class ─────────────────────────────────────────────────────────────────
 
 if [ "$max_pct" -ge 85 ]; then class="ai-crit"
 elif [ "$max_pct" -ge 60 ]; then class="ai-warn"
 else class="ai-ok"; fi
+
+# Append light theme class if system is in light mode
+_is_light_theme() {
+    local theme_pref
+    theme_pref=$(jq -r '.theme // "auto"' "$CONFIG_FILE" 2>/dev/null)
+    if [ "$theme_pref" = "dark" ]; then return 1; fi
+    if [ "$theme_pref" = "light" ]; then return 0; fi
+    local gtk_theme
+    gtk_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in *dark*) return 1 ;; *light*) return 0 ;; esac
+    gtk_theme=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in *[Ll]ight*) return 0 ;; esac
+    return 1
+}
+_is_light_theme && class="$class ai-usage-light"
 
 # ── Build output based on display mode ────────────────────────────────────────
 

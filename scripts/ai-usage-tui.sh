@@ -5,6 +5,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=ai-usage-history.sh
+source "$SCRIPT_DIR/ai-usage-history.sh"
 
 AI_USAGE_PROVIDER="tui"
 
@@ -18,6 +20,10 @@ ensure_config() {
   "display_mode": "icon",
   "refresh_interval": 60,
   "cache_ttl_seconds": 55,
+  "notifications_enabled": true,
+  "history_enabled": true,
+  "history_retention_days": 7,
+  "theme": "auto",
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -29,17 +35,56 @@ EOF
     fi
 }
 
+# ── Theme detection ──────────────────────────────────────────────────────────
+
+detect_system_theme() {
+    local theme_pref
+    theme_pref=$(jq -r '.theme // "auto"' "$AI_USAGE_CONFIG" 2>/dev/null)
+    if [ "$theme_pref" = "dark" ] || [ "$theme_pref" = "light" ]; then
+        echo "$theme_pref"
+        return
+    fi
+    local gtk_theme
+    gtk_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in
+        *dark*) echo "dark"; return ;;
+        *light*) echo "light"; return ;;
+    esac
+    gtk_theme=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")
+    case "$gtk_theme" in
+        *[Ll]ight*) echo "light"; return ;;
+    esac
+    echo "dark"
+}
+
 # ── Colors and styles ─────────────────────────────────────────────────────────
 
 BOLD='\033[1m'
 DIM='\033[2m'
 UNDERLINE='\033[4m'
 RESET='\033[0m'
-CYAN='\033[36m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-RED='\033[31m'
-WHITE='\033[37m'
+
+apply_theme() {
+    local theme="${1:-dark}"
+    if [ "$theme" = "light" ]; then
+        CYAN='\033[38;2;30;102;245m'
+        GREEN='\033[38;2;64;160;43m'
+        YELLOW='\033[38;2;223;142;29m'
+        RED='\033[38;2;210;15;57m'
+        WHITE='\033[38;2;76;79;105m'
+        DIM='\033[38;2;140;143;161m'
+    else
+        CYAN='\033[36m'
+        GREEN='\033[32m'
+        YELLOW='\033[33m'
+        RED='\033[31m'
+        WHITE='\033[37m'
+        DIM='\033[2m'
+    fi
+}
+
+CURRENT_THEME=$(detect_system_theme)
+apply_theme "$CURRENT_THEME"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -175,6 +220,16 @@ render_provider() {
     s_bar=$(progress_bar "$five_hour" 25)
     s_reset=$(time_until "$five_hour_reset")
     printf '  Session  %b %b%3d%%%b  %b↻ %s%b\n' "$s_bar" "$s_color" "$five_hour" "$RESET" "$DIM" "$s_reset" "$RESET"
+
+    # Sparklines (history)
+    local provider_key
+    provider_key=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    local spark_5h spark_7d
+    spark_5h=$(get_sparkline "$provider_key" "five_hour" 20)
+    spark_7d=$(get_sparkline "$provider_key" "seven_day" 20)
+    if [ -n "$spark_5h" ] || [ -n "$spark_7d" ]; then
+        printf '  %bHistory   %s  %s%b\n' "$DIM" "${spark_7d:-—}" "${spark_5h:-—}" "$RESET"
+    fi
 
     # Extra usage for Claude
     if [ "$name" = "Claude" ]; then
@@ -340,9 +395,13 @@ show_settings() {
         [ "$gemini_on" = "true" ] && gemini_mark="${GREEN}✓${RESET}" || gemini_mark="${RED}✗${RESET}"
         [ "$antigravity_on" = "true" ] && antigravity_mark="${GREEN}✓${RESET}" || antigravity_mark="${RED}✗${RESET}"
 
+        local current_theme
+        current_theme=$(jq -r '.theme // "auto"' "$AI_USAGE_CONFIG")
+
         printf "  ${BOLD}${UNDERLINE}d${RESET}${BOLD}isplay mode:${RESET}  %s\n" "$current_mode"
         printf "  ${BOLD}${UNDERLINE}i${RESET}${BOLD}nterval:${RESET}      %ss\n" "$current_interval"
         printf "  cache ${BOLD}${UNDERLINE}t${RESET}${BOLD}tl:${RESET}      %ss\n" "$current_cache_ttl"
+        printf "  th${BOLD}${UNDERLINE}e${RESET}${BOLD}me:${RESET}         %s\n" "$current_theme"
         echo ""
         printf "  ${BOLD}Providers:${RESET}\n"
         printf "  [%b] ${UNDERLINE}c${RESET}laude\n" "$claude_mark"
@@ -351,7 +410,14 @@ show_settings() {
         printf "  [%b] ${UNDERLINE}a${RESET}ntigravity\n" "$antigravity_mark"
         echo ""
         local choice
-        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "t:Cache TTL" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
+        local notify_on
+        notify_on=$(jq -r '.notifications_enabled // true' "$AI_USAGE_CONFIG")
+        local notify_mark
+        [ "$notify_on" = "true" ] && notify_mark="${GREEN}✓${RESET}" || notify_mark="${RED}✗${RESET}"
+        printf "  [%b] ${UNDERLINE}n${RESET}otifications\n" "$notify_mark"
+        echo ""
+
+        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "t:Cache TTL" "e:Theme" "n:Toggle notifications" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
 
         case "$choice" in
             d)
@@ -394,6 +460,29 @@ show_settings() {
                     atomic_write "$AI_USAGE_CONFIG" "$updated"
                     refresh_waybar
                 fi
+                ;;
+            e)
+                local new_theme
+                new_theme=$(gum choose "auto" "dark" "light" \
+                    --cursor.foreground 39 \
+                    --item.foreground 255 \
+                    --header "Select theme:" \
+                    --selected "$current_theme")
+                if [ -n "$new_theme" ]; then
+                    local updated
+                    updated=$(jq --arg t "$new_theme" '.theme = $t' "$AI_USAGE_CONFIG")
+                    atomic_write "$AI_USAGE_CONFIG" "$updated"
+                    CURRENT_THEME=$(detect_system_theme)
+                    apply_theme "$CURRENT_THEME"
+                    refresh_waybar
+                fi
+                ;;
+            n)
+                local new_val
+                [ "$notify_on" = "true" ] && new_val=false || new_val=true
+                local updated
+                updated=$(jq --argjson v "$new_val" '.notifications_enabled = $v' "$AI_USAGE_CONFIG")
+                atomic_write "$AI_USAGE_CONFIG" "$updated"
                 ;;
             c)
                 local new_val
@@ -500,6 +589,111 @@ _show_log_pager() {
     fi
 }
 
+# ── History screen ────────────────────────────────────────────────────────
+
+show_history() {
+    clear
+    echo ""
+    gum style \
+        --border rounded \
+        --border-foreground 39 \
+        --padding "0 2" \
+        --margin "0 1" \
+        --bold \
+        "  Usage History (sparklines)"
+    echo ""
+
+    local providers=("claude" "codex" "gemini" "antigravity")
+    local names=("Claude" "Codex" "Gemini" "Antigravity")
+
+    for i in "${!providers[@]}"; do
+        local p="${providers[$i]}"
+        local n="${names[$i]}"
+        local history_file="$AI_USAGE_HISTORY_DIR/${p}.jsonl"
+
+        if [ ! -f "$history_file" ]; then
+            continue
+        fi
+
+        local count
+        count=$(wc -l < "$history_file" 2>/dev/null || echo 0)
+        [ "$count" -eq 0 ] && continue
+
+        local spark_5h spark_7d
+        spark_5h=$(get_sparkline "$p" "five_hour" 40)
+        spark_7d=$(get_sparkline "$p" "seven_day" 40)
+
+        printf '  %b%b%s%b  %b(%d samples)%b\n' "$BOLD" "$CYAN" "$n" "$RESET" "$DIM" "$count" "$RESET"
+        [ -n "$spark_7d" ] && printf '  Weekly   %b%s%b\n' "$DIM" "$spark_7d" "$RESET"
+        [ -n "$spark_5h" ] && printf '  Session  %b%s%b\n' "$DIM" "$spark_5h" "$RESET"
+        echo ""
+    done
+
+    printf '  %bPress any key to return%b\n' "$DIM" "$RESET"
+    read -r -s -n 1 < /dev/tty
+}
+
+# ── Clipboard export ─────────────────────────────────────────────────────
+
+_get_clipboard_cmd() {
+    if command -v wl-copy &>/dev/null; then echo "wl-copy"
+    elif command -v xclip &>/dev/null; then echo "xclip -selection clipboard"
+    elif command -v xsel &>/dev/null; then echo "xsel --clipboard --input"
+    else echo ""; fi
+}
+
+_extract_pct() {
+    local json="$1" field="$2"
+    echo "$json" | jq -r ".$field // 0" 2>/dev/null | cut -d. -f1
+}
+
+copy_to_clipboard() {
+    local clip_cmd
+    clip_cmd=$(_get_clipboard_cmd)
+    if [ -z "$clip_cmd" ]; then
+        gum style --foreground 196 "  No clipboard tool found. Install wl-clipboard."
+        sleep 2
+        return
+    fi
+
+    local report
+    report="AI Usage Report ($(date '+%Y-%m-%d %H:%M'))"
+    report+=$'\n'"──────────────────────────────────"
+
+    if $CLAUDE_OK; then
+        local c5 c7 cp
+        c5=$(_extract_pct "$CLAUDE_JSON" "five_hour")
+        c7=$(_extract_pct "$CLAUDE_JSON" "seven_day")
+        cp=$(echo "$CLAUDE_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Claude:' "$c5" "$c7" "$cp")"
+    fi
+    if $CODEX_OK; then
+        local x5 x7 xp
+        x5=$(_extract_pct "$CODEX_JSON" "five_hour")
+        x7=$(_extract_pct "$CODEX_JSON" "seven_day")
+        xp=$(echo "$CODEX_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Codex:' "$x5" "$x7" "$xp")"
+    fi
+    if $GEMINI_OK; then
+        local g5 g7 gp
+        g5=$(_extract_pct "$GEMINI_JSON" "five_hour")
+        g7=$(_extract_pct "$GEMINI_JSON" "seven_day")
+        gp=$(echo "$GEMINI_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Gemini:' "$g5" "$g7" "$gp")"
+    fi
+    if $ANTIGRAVITY_OK; then
+        local a5 a7 ap
+        a5=$(_extract_pct "$ANTIGRAVITY_JSON" "five_hour")
+        a7=$(_extract_pct "$ANTIGRAVITY_JSON" "seven_day")
+        ap=$(echo "$ANTIGRAVITY_JSON" | jq -r '.plan // "?"' 2>/dev/null)
+        report+=$'\n'"$(printf '%-14s 5h: %3d%%  7d: %3d%%  (%s)' 'Antigravity:' "$a5" "$a7" "$ap")"
+    fi
+
+    echo "$report" | $clip_cmd 2>/dev/null
+    gum style --foreground 82 "  ✓ Copied to clipboard!"
+    sleep 1
+}
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 main() {
@@ -510,12 +704,18 @@ main() {
         show_dashboard
 
         local choice
-        choice=$(prompt_choice "r:Refresh" "s:Settings" "l:View logs" "q:Quit")
+        choice=$(prompt_choice "r:Refresh" "h:History" "c:Copy to clipboard" "s:Settings" "l:View logs" "q:Quit")
 
         case "$choice" in
             r)
                 rm -f "$AI_USAGE_CACHE_DIR"/ai-usage-cache-*.json
                 fetch_all
+                ;;
+            h)
+                show_history
+                ;;
+            c)
+                copy_to_clipboard
                 ;;
             s)
                 show_settings
