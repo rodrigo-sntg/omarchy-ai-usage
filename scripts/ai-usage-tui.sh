@@ -17,6 +17,7 @@ ensure_config() {
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "cache_ttl_seconds": 55,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },
@@ -322,10 +323,11 @@ show_settings() {
             "⚙  Settings"
         echo ""
 
-        local current_mode current_interval
+        local current_mode current_interval current_cache_ttl
         current_mode=$(jq -r '.display_mode // "icon"' "$AI_USAGE_CONFIG")
         current_interval=$(jq -r '.refresh_interval // 60' "$AI_USAGE_CONFIG")
-        
+        current_cache_ttl=$(jq -r '.cache_ttl_seconds // 55' "$AI_USAGE_CONFIG")
+
         local claude_on codex_on gemini_on antigravity_on
         claude_on=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG")
         codex_on=$(jq -r 'if .providers.codex.enabled == null then true else .providers.codex.enabled end' "$AI_USAGE_CONFIG")
@@ -340,6 +342,7 @@ show_settings() {
 
         printf "  ${BOLD}${UNDERLINE}d${RESET}${BOLD}isplay mode:${RESET}  %s\n" "$current_mode"
         printf "  ${BOLD}${UNDERLINE}i${RESET}${BOLD}nterval:${RESET}      %ss\n" "$current_interval"
+        printf "  cache ${BOLD}${UNDERLINE}t${RESET}${BOLD}tl:${RESET}      %ss\n" "$current_cache_ttl"
         echo ""
         printf "  ${BOLD}Providers:${RESET}\n"
         printf "  [%b] ${UNDERLINE}c${RESET}laude\n" "$claude_mark"
@@ -348,7 +351,7 @@ show_settings() {
         printf "  [%b] ${UNDERLINE}a${RESET}ntigravity\n" "$antigravity_mark"
         echo ""
         local choice
-        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
+        choice=$(prompt_choice "d:Display mode" "i:Refresh interval" "t:Cache TTL" "c:Toggle Claude" "x:Toggle Codex" "g:Toggle Gemini" "a:Toggle Antigravity" "b:Back")
 
         case "$choice" in
             d)
@@ -374,6 +377,20 @@ show_settings() {
                 if [ -n "$new_interval" ]; then
                     local updated
                     updated=$(jq --argjson i "$new_interval" '.refresh_interval = $i' "$AI_USAGE_CONFIG")
+                    atomic_write "$AI_USAGE_CONFIG" "$updated"
+                    refresh_waybar
+                fi
+                ;;
+            t)
+                local new_ttl
+                new_ttl=$(gum choose "30" "45" "55" "90" "120" \
+                    --cursor.foreground 39 \
+                    --item.foreground 255 \
+                    --header "Cache TTL (seconds):" \
+                    --selected "$current_cache_ttl")
+                if [ -n "$new_ttl" ]; then
+                    local updated
+                    updated=$(jq --argjson t "$new_ttl" '.cache_ttl_seconds = $t' "$AI_USAGE_CONFIG")
                     atomic_write "$AI_USAGE_CONFIG" "$updated"
                     refresh_waybar
                 fi

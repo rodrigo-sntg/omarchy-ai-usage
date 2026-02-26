@@ -85,6 +85,7 @@ if [ ! -f "$AI_CONFIG" ]; then
 {
   "display_mode": "icon",
   "refresh_interval": 60,
+  "cache_ttl_seconds": 55,
   "providers": {
     "claude": { "enabled": true },
     "codex": { "enabled": true },

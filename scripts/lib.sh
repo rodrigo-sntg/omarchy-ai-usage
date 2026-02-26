@@ -58,17 +58,30 @@ error_json() {
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 
-CACHE_MAX_AGE=55  # seconds
+CACHE_MAX_AGE_DEFAULT=55  # seconds
 
-# Check cache freshness. Usage: check_cache "/path/to/cache.json"
-# If fresh, prints cached content and exits the script.
+# Read a value from the config file. Usage: get_config_value "key" "default"
+get_config_value() {
+    local key="$1" default="$2"
+    if [ -f "$AI_USAGE_CONFIG" ]; then
+        local val
+        val=$(jq -r ".$key // empty" "$AI_USAGE_CONFIG" 2>/dev/null)
+        [ -n "$val" ] && echo "$val" && return
+    fi
+    echo "$default"
+}
+
+# Check cache freshness. Usage: check_cache "/path/to/cache.json" [ttl_seconds]
+# TTL resolution: explicit param > AI_USAGE_CACHE_TTL env > config > 55s default
 check_cache() {
     local cache_file="$1"
+    local ttl="${2:-${AI_USAGE_CACHE_TTL:-}}"
+    [ -z "$ttl" ] && ttl=$(get_config_value "cache_ttl_seconds" "$CACHE_MAX_AGE_DEFAULT")
     _ensure_dirs
     if [ -f "$cache_file" ]; then
         local cache_age
         cache_age=$(( $(date +%s) - $(stat -c %Y "$cache_file") ))
-        if [ "$cache_age" -lt "$CACHE_MAX_AGE" ]; then
+        if [ "$cache_age" -lt "$ttl" ]; then
             cat "$cache_file"
             exit 0
         fi
