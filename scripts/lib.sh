@@ -98,6 +98,25 @@ cache_output() {
     printf '%s\n' "$content"
 }
 
+# ── Countdown formatting ─────────────────────────────────────────────────────
+
+# Format an ISO 8601 timestamp as a human-friendly countdown.
+# Returns: "< 1m", "42m", "2h 30m", "1d 5h", "expired", or "—"
+format_countdown() {
+    local iso="$1"
+    [ -z "$iso" ] || [ "$iso" = "null" ] || [ "$iso" = "" ] && echo "—" && return
+    local reset_epoch now_epoch diff_s
+    reset_epoch=$(date -d "$iso" +%s 2>/dev/null) || { echo "—"; return; }
+    now_epoch=$(date +%s)
+    diff_s=$(( reset_epoch - now_epoch ))
+    if [ "$diff_s" -le 0 ]; then echo "expired"; return; fi
+    local d=$(( diff_s / 86400 )) h=$(( (diff_s % 86400) / 3600 )) m=$(( (diff_s % 3600) / 60 ))
+    if [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
+    elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+    elif [ "$m" -gt 0 ]; then printf '%dm' "$m"
+    else echo "< 1m"; fi
+}
+
 # ── Resolve script directory ──────────────────────────────────────────────────
 
 # Returns the directory where ai-usage scripts live.

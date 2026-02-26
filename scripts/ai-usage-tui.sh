@@ -67,20 +67,8 @@ progress_bar() {
     echo -e "$bar"
 }
 
-time_until() {
-    local iso="$1"
-    [ -z "$iso" ] || [ "$iso" = "null" ] && echo "—" && return
-    local target now diff
-    target=$(date -d "$iso" +%s 2>/dev/null) || { echo "—"; return; }
-    now=$(date +%s)
-    diff=$(( target - now ))
-    [ "$diff" -le 0 ] && echo "now" && return
-    local d=$(( diff / 86400 )) h=$(( (diff % 86400) / 3600 )) m=$(( (diff % 3600) / 60 ))
-    if [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
-    elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
-    elif [ "$m" -gt 0 ]; then printf '%dm' "$m"
-    else echo "<1m"; fi
-}
+# time_until removed — now using format_countdown from lib.sh
+time_until() { format_countdown "$1"; }
 
 format_plan() {
     local plan="$1"
