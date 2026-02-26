@@ -42,55 +42,100 @@ fi
 
 # ── Extract OAuth client ID/secret from Gemini CLI ────────────────────────────
 
-extract_client_credentials() {
-    local gemini_bin oauth2_js
+CLIENT_CREDS_CACHE="$HOME/.config/ai-usage/gemini-client-creds.json"
 
-    gemini_bin=$(command -v gemini 2>/dev/null)
-    if [ -z "$gemini_bin" ]; then
-        log_warn "gemini CLI not found in PATH"
-        return 1
-    fi
+_extract_from_oauth2_js() {
+    local oauth2_js="$1"
+    [ -f "$oauth2_js" ] || return 1
+    log_info "extracting client credentials from $oauth2_js"
+    GEMINI_CLIENT_ID=$(grep -oP 'OAUTH_CLIENT_ID\s*=\s*["\x27]([^"\x27]+)["\x27]' "$oauth2_js" | head -1 | grep -oP '["'"'"'][^"'"'"']+["'"'"']' | tr -d "\"'")
+    GEMINI_CLIENT_SECRET=$(grep -oP 'OAUTH_CLIENT_SECRET\s*=\s*["\x27]([^"\x27]+)["\x27]' "$oauth2_js" | head -1 | grep -oP '["'"'"'][^"'"'"']+["'"'"']' | tr -d "\"'")
+    [ -n "$GEMINI_CLIENT_ID" ] && [ -n "$GEMINI_CLIENT_SECRET" ]
+}
 
-    # Resolve symlinks to find the actual installation
+_save_client_creds_cache() {
+    local cache_json
+    cache_json=$(jq -n --arg id "$GEMINI_CLIENT_ID" --arg secret "$GEMINI_CLIENT_SECRET" \
+        --argjson ts "$(date +%s)" \
+        '{client_id: $id, client_secret: $secret, cached_at: $ts}')
+    atomic_write "$CLIENT_CREDS_CACHE" "$cache_json"
+    log_info "cached client credentials"
+}
+
+_load_cached_client_creds() {
+    [ -f "$CLIENT_CREDS_CACHE" ] || return 1
+    GEMINI_CLIENT_ID=$(jq -r '.client_id // empty' "$CLIENT_CREDS_CACHE" 2>/dev/null)
+    GEMINI_CLIENT_SECRET=$(jq -r '.client_secret // empty' "$CLIENT_CREDS_CACHE" 2>/dev/null)
+    [ -n "$GEMINI_CLIENT_ID" ] && [ -n "$GEMINI_CLIENT_SECRET" ]
+}
+
+_invalidate_client_creds_cache() {
+    rm -f "$CLIENT_CREDS_CACHE" 2>/dev/null
+    log_info "invalidated cached client credentials"
+}
+
+# Strategy 1: Cached credentials
+_strategy_cached() {
+    log_info "trying cached credentials..."
+    _load_cached_client_creds
+}
+
+# Strategy 2: Known paths relative to gemini binary
+_strategy_known_paths() {
+    local gemini_bin
+    gemini_bin=$(command -v gemini 2>/dev/null) || return 1
     gemini_bin=$(readlink -f "$gemini_bin" 2>/dev/null || echo "$gemini_bin")
     local base_dir
     base_dir=$(dirname "$gemini_bin")
+    log_info "trying known paths from $base_dir..."
 
-    # Search for oauth2.js in common locations
     local search_paths=(
         "$base_dir/../libexec/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
         "$base_dir/../lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
         "$base_dir/../node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
         "$base_dir/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
+        "$HOME/.local/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
+        "$HOME/.yarn/global/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
+        "$HOME/.volta/tools/image/packages/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"
     )
 
     for path in "${search_paths[@]}"; do
-        if [ -f "$path" ]; then
-            oauth2_js="$path"
-            break
-        fi
+        if _extract_from_oauth2_js "$path"; then return 0; fi
     done
+    return 1
+}
 
-    # Fallback: use find
-    if [ -z "$oauth2_js" ]; then
-        oauth2_js=$(find "$(dirname "$base_dir")" -name "oauth2.js" -path "*/code_assist/*" 2>/dev/null | head -1)
-    fi
+# Strategy 3: find search
+_strategy_find_search() {
+    local gemini_bin base_dir oauth2_js
+    gemini_bin=$(command -v gemini 2>/dev/null) || return 1
+    gemini_bin=$(readlink -f "$gemini_bin" 2>/dev/null || echo "$gemini_bin")
+    base_dir=$(dirname "$(dirname "$gemini_bin")")
+    log_info "trying find search in $base_dir..."
+    oauth2_js=$(find "$base_dir" -maxdepth 10 -name "oauth2.js" -path "*/code_assist/*" 2>/dev/null | head -1)
+    _extract_from_oauth2_js "$oauth2_js"
+}
 
-    if [ -z "$oauth2_js" ] || [ ! -f "$oauth2_js" ]; then
-        log_warn "oauth2.js not found in Gemini CLI installation"
-        return 1
-    fi
+# Strategy 4: node require.resolve
+_strategy_node_resolve() {
+    command -v node &>/dev/null || return 1
+    log_info "trying node require.resolve..."
+    local oauth2_js
+    oauth2_js=$(node -e "try{console.log(require.resolve('@google/gemini-cli-core/dist/src/code_assist/oauth2.js'))}catch(e){}" 2>/dev/null)
+    _extract_from_oauth2_js "$oauth2_js"
+}
 
-    log_info "extracting client credentials from $oauth2_js"
+extract_client_credentials() {
+    GEMINI_CLIENT_ID=""
+    GEMINI_CLIENT_SECRET=""
 
-    # Extract client ID and secret via regex
-    GEMINI_CLIENT_ID=$(grep -oP 'OAUTH_CLIENT_ID\s*=\s*["\x27]([^"\x27]+)["\x27]' "$oauth2_js" | head -1 | grep -oP '["'"'"'][^"'"'"']+["'"'"']' | tr -d "\"'")
-    GEMINI_CLIENT_SECRET=$(grep -oP 'OAUTH_CLIENT_SECRET\s*=\s*["\x27]([^"\x27]+)["\x27]' "$oauth2_js" | head -1 | grep -oP '["'"'"'][^"'"'"']+["'"'"']' | tr -d "\"'")
+    # Try each strategy in order
+    if _strategy_cached; then return 0; fi
+    if _strategy_known_paths; then _save_client_creds_cache; return 0; fi
+    if _strategy_find_search; then _save_client_creds_cache; return 0; fi
+    if _strategy_node_resolve; then _save_client_creds_cache; return 0; fi
 
-    if [ -n "$GEMINI_CLIENT_ID" ] && [ -n "$GEMINI_CLIENT_SECRET" ]; then
-        return 0
-    fi
-    log_warn "could not extract client ID/secret from oauth2.js"
+    log_warn "all credential extraction strategies failed"
     return 1
 }
 
@@ -106,14 +151,17 @@ if [ "$now_ms" -ge "$expiry_date" ] && [ -n "$refresh_token" ]; then
         error_json "could not extract OAuth client credentials from Gemini CLI"
     fi
 
-    refresh_response=$(curl -sf -X POST "$TOKEN_URL" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "client_id=$GEMINI_CLIENT_ID" \
-        -d "client_secret=$GEMINI_CLIENT_SECRET" \
-        -d "refresh_token=$refresh_token" \
-        -d "grant_type=refresh_token" \
-        2>&1)
+    _attempt_token_refresh() {
+        curl -sf -X POST "$TOKEN_URL" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=$GEMINI_CLIENT_ID" \
+            -d "client_secret=$GEMINI_CLIENT_SECRET" \
+            -d "refresh_token=$refresh_token" \
+            -d "grant_type=refresh_token" \
+            2>&1
+    }
 
+    refresh_response=$(_attempt_token_refresh)
     if [ $? -ne 0 ] || [ -z "$refresh_response" ]; then
         log_error "token refresh request failed: $refresh_response"
         error_json "token refresh request failed"
@@ -121,6 +169,17 @@ if [ "$now_ms" -ge "$expiry_date" ] && [ -n "$refresh_token" ]; then
 
     new_access_token=$(echo "$refresh_response" | jq -r '.access_token // empty')
     expires_in=$(echo "$refresh_response" | jq -r '.expires_in // empty')
+
+    # If refresh failed with cached creds, invalidate and retry with fresh extraction
+    if [ -z "$new_access_token" ] && [ -f "$CLIENT_CREDS_CACHE" ]; then
+        log_warn "token refresh failed with cached creds, re-extracting..."
+        _invalidate_client_creds_cache
+        if extract_client_credentials; then
+            refresh_response=$(_attempt_token_refresh)
+            new_access_token=$(echo "$refresh_response" | jq -r '.access_token // empty')
+            expires_in=$(echo "$refresh_response" | jq -r '.expires_in // empty')
+        fi
+    fi
 
     if [ -z "$new_access_token" ]; then
         err_msg=$(echo "$refresh_response" | jq -r '.error_description // .error // "unknown error"')
