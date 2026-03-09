@@ -18,8 +18,8 @@ ensure_config() {
         cat > "$AI_USAGE_CONFIG" << 'EOF'
 {
   "display_mode": "icon",
-  "refresh_interval": 60,
-  "cache_ttl_seconds": 55,
+  "refresh_interval": 300,
+  "cache_ttl_seconds": 295,
   "notifications_enabled": true,
   "history_enabled": true,
   "history_retention_days": 7,
@@ -318,6 +318,36 @@ refresh_waybar() {
     pkill -RTMIN+9 waybar 2>/dev/null
 }
 
+update_waybar_interval() {
+    local new_interval="$1"
+    local waybar_config="$HOME/.config/waybar/config.jsonc"
+    [ -f "$waybar_config" ] || return 0
+
+    local tmp
+    tmp=$(mktemp) || return 1
+    python3 -c "
+import json, re, sys
+with open('$waybar_config', 'r') as f:
+    content = f.read()
+clean = re.sub(r'//.*\$', '', content, flags=re.MULTILINE)
+try:
+    data = json.loads(clean)
+except Exception as e:
+    sys.exit(1)
+if 'custom/ai-usage' in data:
+    data['custom/ai-usage']['interval'] = $new_interval
+with open('$tmp', 'w') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+" 2>/dev/null
+
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$waybar_config"
+        omarchy-restart-waybar 2>/dev/null || pkill -HUP waybar 2>/dev/null || true
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # ── Screens ───────────────────────────────────────────────────────────────────
 
 show_dashboard() {
@@ -380,8 +410,8 @@ show_settings() {
 
         local current_mode current_interval current_cache_ttl
         current_mode=$(jq -r '.display_mode // "icon"' "$AI_USAGE_CONFIG")
-        current_interval=$(jq -r '.refresh_interval // 60' "$AI_USAGE_CONFIG")
-        current_cache_ttl=$(jq -r '.cache_ttl_seconds // 55' "$AI_USAGE_CONFIG")
+        current_interval=$(jq -r '.refresh_interval // 300' "$AI_USAGE_CONFIG")
+        current_cache_ttl=$(jq -r '.cache_ttl_seconds // 295' "$AI_USAGE_CONFIG")
 
         local claude_on codex_on gemini_on antigravity_on
         claude_on=$(jq -r 'if .providers.claude.enabled == null then true else .providers.claude.enabled end' "$AI_USAGE_CONFIG")
@@ -436,20 +466,23 @@ show_settings() {
                 ;;
             i)
                 local new_interval
-                new_interval=$(gum choose "30" "60" "120" "300" \
+                new_interval=$(gum choose "60" "120" "300" "600" \
                     --cursor.foreground 39 \
                     --item.foreground 255 \
-                    --header "Refresh interval (seconds):")
+                    --header "Refresh interval (seconds):" \
+                    --selected "$current_interval")
                 if [ -n "$new_interval" ]; then
+                    local new_ttl=$(( new_interval - 5 ))
                     local updated
-                    updated=$(jq --argjson i "$new_interval" '.refresh_interval = $i' "$AI_USAGE_CONFIG")
+                    updated=$(jq --argjson i "$new_interval" --argjson t "$new_ttl" \
+                        '.refresh_interval = $i | .cache_ttl_seconds = $t' "$AI_USAGE_CONFIG")
                     atomic_write "$AI_USAGE_CONFIG" "$updated"
-                    refresh_waybar
+                    update_waybar_interval "$new_interval"
                 fi
                 ;;
             t)
                 local new_ttl
-                new_ttl=$(gum choose "30" "45" "55" "90" "120" \
+                new_ttl=$(gum choose "55" "115" "295" "595" \
                     --cursor.foreground 39 \
                     --item.foreground 255 \
                     --header "Cache TTL (seconds):" \

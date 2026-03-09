@@ -61,7 +61,7 @@ error_json() {
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 
-CACHE_MAX_AGE_DEFAULT=55  # seconds
+CACHE_MAX_AGE_DEFAULT=295  # seconds
 
 # Read a value from the config file. Usage: get_config_value "key" "default"
 get_config_value() {
