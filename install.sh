@@ -87,8 +87,8 @@ if [ ! -f "$AI_CONFIG" ]; then
     cat > "$AI_CONFIG" << 'EOF'
 {
   "display_mode": "icon",
-  "refresh_interval": 60,
-  "cache_ttl_seconds": 55,
+  "refresh_interval": 300,
+  "cache_ttl_seconds": 295,
   "notifications_enabled": true,
   "notify_warn_threshold": 80,
   "notify_critical_threshold": 95,
@@ -108,6 +108,10 @@ EOF
 else
     echo "  ✓ Config already exists (preserved)"
 fi
+
+# Read refresh_interval from config to set waybar polling interval
+WAYBAR_INTERVAL=$(jq -r '.refresh_interval // 300' "$AI_CONFIG" 2>/dev/null)
+WAYBAR_INTERVAL=${WAYBAR_INTERVAL:-300}
 
 # ── Add/Update waybar module ──────────────────────────────────────────────────
 
@@ -139,7 +143,7 @@ data['modules-right'] = mods
 data['custom/ai-usage'] = {
     'exec': '$WAYBAR_SCRIPTS/ai-usage.sh',
     'return-type': 'json',
-    'interval': 60,
+    'interval': $WAYBAR_INTERVAL,
     'signal': 9,
     'tooltip': True,
     'format': '{}',
