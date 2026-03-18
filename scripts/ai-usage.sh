@@ -127,6 +127,14 @@ if $claude_ok; then
     c7r=$(echo "$claude_json" | jq -r '.seven_day_reset // ""')
     c_bar=$(progress_bar_6 "$c5")
     tooltip_lines+=("Claude  ${c_bar}  ${c5}%  5h↻$(format_countdown "$c5r")  7d↻$(format_countdown "$c7r")")
+    # Session token stats (from JSONL parsing in ai-usage-claude.sh)
+    c_msgs=$(echo "$claude_json" | jq -r '.session_messages // 0')
+    if [ "$c_msgs" -gt 0 ] 2>/dev/null; then
+        c_out=$(format_tokens "$(echo "$claude_json" | jq -r '.total_output_tokens // 0')")
+        c_cread=$(format_tokens "$(echo "$claude_json" | jq -r '.total_cache_read_tokens // 0')")
+        c_ccreate=$(format_tokens "$(echo "$claude_json" | jq -r '.total_cache_creation_tokens // 0')")
+        tooltip_lines+=("        ${c_msgs} msgs  out:${c_out}  cache↓${c_cread}  cache↑${c_ccreate}")
+    fi
     [ "$c7" -gt "$max_pct" ] 2>/dev/null && max_pct=$c7
     [ "$c5" -gt "$max_pct" ] 2>/dev/null && max_pct=$c5
 fi
@@ -246,12 +254,70 @@ if ! $claude_ok && ! $codex_ok && ! $gemini_ok && ! $antigravity_ok; then
     exit 0
 fi
 
+# ── ccusage daily report (optional, cached separately, 5 min TTL) ────────────
+
+# Auto-detect ccusage binary (bun global, npm global, or PATH)
+CCUSAGE_BIN=""
+for candidate in \
+    "$HOME/.cache/.bun/bin/ccusage" \
+    "$HOME/.bun/bin/ccusage" \
+    "$HOME/.local/bin/ccusage" \
+    "$(command -v ccusage 2>/dev/null)"; do
+    if [ -x "$candidate" ]; then
+        CCUSAGE_BIN="$candidate"
+        break
+    fi
+done
+
+CCUSAGE_CACHE="$AI_USAGE_CACHE_DIR/ccusage-daily.json"
+CCUSAGE_TTL=300
+
+ccusage_json=""
+if [ -n "$CCUSAGE_BIN" ]; then
+    ccusage_fresh=false
+    if [ -f "$CCUSAGE_CACHE" ]; then
+        ccusage_age=$(( $(date +%s) - $(stat -c %Y "$CCUSAGE_CACHE") ))
+        [ "$ccusage_age" -lt "$CCUSAGE_TTL" ] && ccusage_fresh=true
+    fi
+
+    if $ccusage_fresh; then
+        ccusage_json=$(cat "$CCUSAGE_CACHE" 2>/dev/null)
+    else
+        ccusage_json=$("$CCUSAGE_BIN" --json --offline --since "$(date +%Y%m%d)" 2>/dev/null)
+        if [ -n "$ccusage_json" ] && echo "$ccusage_json" | jq -e '.totals' &>/dev/null; then
+            atomic_write "$CCUSAGE_CACHE" "$ccusage_json"
+        else
+            [ -f "$CCUSAGE_CACHE" ] && ccusage_json=$(cat "$CCUSAGE_CACHE" 2>/dev/null)
+        fi
+    fi
+fi
+
+ccusage_lines=()
+if [ -n "$ccusage_json" ] && echo "$ccusage_json" | jq -e '.totals.totalCost' &>/dev/null; then
+    daily_cost=$(echo "$ccusage_json" | jq -r '.totals.totalCost')
+    daily_tokens=$(echo "$ccusage_json" | jq -r '.totals.totalTokens')
+    daily_out=$(echo "$ccusage_json" | jq -r '.totals.outputTokens')
+    ccusage_lines+=("Today  $(format_cost "$daily_cost")  $(format_tokens "$daily_tokens") tok  out:$(format_tokens "$daily_out")")
+
+    while IFS='|' read -r model cost out; do
+        [ -z "$model" ] && continue
+        short=$(echo "$model" | sed 's/^claude-//; s/-[0-9]\{8\}$//')
+        ccusage_lines+=("  ${short}  $(format_cost "$cost")  out:$(format_tokens "$out")")
+    done < <(echo "$ccusage_json" | jq -r '.daily[0].modelBreakdowns[]? | [.modelName, .cost, .outputTokens] | join("|")' 2>/dev/null)
+fi
+
 # Build tooltip (use real newlines, jq will escape them properly)
 tooltip="AI Usage"
 tooltip+=$'\n'"─────────────────"
 for line in "${tooltip_lines[@]}"; do
     tooltip+=$'\n'"$line"
 done
+if [ ${#ccusage_lines[@]} -gt 0 ]; then
+    tooltip+=$'\n'"─────────────────"
+    for line in "${ccusage_lines[@]}"; do
+        tooltip+=$'\n'"$line"
+    done
+fi
 
 case "$DISPLAY_MODE" in
     icon)

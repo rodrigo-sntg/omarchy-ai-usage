@@ -91,6 +91,18 @@ check_cache() {
     fi
 }
 
+# Return stale cache if it exists (better than nothing on transient errors).
+# Usage: fallback_stale_cache "/path/to/cache.json" "error_context"
+fallback_stale_cache() {
+    local cache_file="$1"
+    local context="${2:-transient error}"
+    if [ -f "$cache_file" ]; then
+        log_warn "using stale cache after $context"
+        cat "$cache_file"
+        exit 0
+    fi
+}
+
 # ── Atomic write ──────────────────────────────────────────────────────────────
 
 # Write content to file atomically (tmp + mv). Usage: atomic_write "/path/to/file" "content"
@@ -133,12 +145,31 @@ format_countdown() {
     else echo "< 1m"; fi
 }
 
+# ── Token formatting ──────────────────────────────────────────────────────────
+
+# Format a raw token count as human-readable: 0, 842, 24.9K, 6.1M
+format_tokens() {
+    local n="${1:-0}"
+    if [ "$n" -ge 1000000 ] 2>/dev/null; then
+        awk "BEGIN { printf \"%.1fM\", $n / 1000000 }"
+    elif [ "$n" -ge 1000 ] 2>/dev/null; then
+        awk "BEGIN { printf \"%.1fK\", $n / 1000 }"
+    else
+        echo "$n"
+    fi
+}
+
+# Format a cost as $X.XX
+format_cost() {
+    awk "BEGIN { printf \"$%.2f\", ${1:-0} }"
+}
+
 # ── Retry curl ───────────────────────────────────────────────────────────────
 
 # Curl wrapper with retry and exponential backoff for transient failures.
 # Usage: retry_curl [--retries N] [curl_args...]
-# Retries up to 3 times (default) on HTTP 429/5xx or connection errors.
-# Does NOT retry on 400/401/403/404.
+# Retries up to 3 times (default) on HTTP 5xx or connection errors.
+# Does NOT retry on 400/401/403/404/429 (retrying rate limits worsens them).
 retry_curl() {
     local max_retries=3
     if [ "$1" = "--retries" ]; then
@@ -163,18 +194,18 @@ retry_curl() {
             return 0
         fi
 
-        # Don't retry on auth/client errors
+        # Don't retry on auth/client errors or rate limits (retrying 429 worsens it)
         case "$http_code" in
-            400|401|403|404) break ;;
+            400|401|403|404|429) break ;;
         esac
 
-        # Retryable: connection errors (curl exit 6,7,28,35,52,56) or HTTP 429/5xx
+        # Retryable: connection errors (curl exit 6,7,28,35,52,56) or HTTP 5xx
         local retryable=false
         case "$curl_exit" in
             6|7|28|35|52|56) retryable=true ;;
         esac
         case "$http_code" in
-            429|500|502|503|504) retryable=true ;;
+            500|502|503|504) retryable=true ;;
         esac
 
         if ! $retryable; then

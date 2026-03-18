@@ -89,6 +89,38 @@ if [ "$now_ms" -ge "$expires_at" ]; then
     fi
 fi
 
+# ── Parse current session JSONL for token totals (always, even on API failure) ─
+
+# Find the most recently modified JSONL across all Claude Code projects
+session_file=$(ls -t "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -1)
+token_data=""
+
+if [ -n "$session_file" ] && [ -f "$session_file" ]; then
+    token_data=$(jq -n '
+        [inputs | select(.message.usage != null) | .message.usage]
+        | {
+            total_output_tokens:         (map(.output_tokens // 0) | add // 0),
+            total_cache_read_tokens:     (map(.cache_read_input_tokens // 0) | add // 0),
+            total_cache_creation_tokens: (map(.cache_creation_input_tokens // 0) | add // 0),
+            session_messages:            length
+        }' "$session_file" 2>/dev/null)
+fi
+
+# Helper: return stale cache enriched with fresh JSONL token data
+_fallback_with_tokens() {
+    local context="$1"
+    if [ -f "$CACHE_FILE" ]; then
+        log_warn "using stale cache after $context"
+        local stale
+        stale=$(cat "$CACHE_FILE")
+        if [ -n "$token_data" ]; then
+            stale=$(echo "$stale" | jq -c --argjson td "$token_data" '. + $td')
+        fi
+        printf '%s\n' "$stale"
+        exit 0
+    fi
+}
+
 # Fetch usage data
 log_info "fetching usage data..."
 usage_response=$(retry_curl -s "$USAGE_URL" \
@@ -98,6 +130,7 @@ usage_response=$(retry_curl -s "$USAGE_URL" \
 
 if [ $? -ne 0 ] || [ -z "$usage_response" ]; then
     log_error "usage API request failed: $usage_response"
+    _fallback_with_tokens "API request failed"
     error_json "usage API request failed" "check internet or run 'make check'"
 fi
 
@@ -105,6 +138,7 @@ fi
 api_error=$(echo "$usage_response" | jq -r '.error // empty' 2>/dev/null)
 if [ -n "$api_error" ]; then
     log_error "usage API error: $api_error"
+    _fallback_with_tokens "API error: $api_error"
     error_json "usage API error: $api_error"
 fi
 
@@ -120,6 +154,11 @@ output=$(echo "$usage_response" | jq -c --arg plan "$rate_limit_tier" '{
 
 if [ $? -ne 0 ] || [ -z "$output" ]; then
     error_json "failed to parse usage response" "API may have changed format; check logs"
+fi
+
+# Merge JSONL token data into API output
+if [ -n "$token_data" ]; then
+    output=$(echo "$output" | jq -c --argjson td "$token_data" '. + $td')
 fi
 
 # Cache and output
