@@ -59,7 +59,8 @@ _save_client_creds_cache() {
         --argjson ts "$(date +%s)" \
         '{client_id: $id, client_secret: $secret, cached_at: $ts}')
     atomic_write "$CLIENT_CREDS_CACHE" "$cache_json"
-    log_info "cached client credentials"
+    chmod 600 "$CLIENT_CREDS_CACHE" 2>/dev/null
+    log_info "cached client credentials (secured)" 
 }
 
 _load_cached_client_creds() {
@@ -78,6 +79,44 @@ _invalidate_client_creds_cache() {
 _strategy_cached() {
     log_info "trying cached credentials..."
     _load_cached_client_creds
+}
+
+# Strategy 1.5: Bundle search (asdf / global bundled npm)
+_strategy_bundle() {
+    local gemini_bin
+
+    # Resolve asdf shim if applicable
+    if command -v asdf &>/dev/null; then
+        gemini_bin=$(asdf which gemini 2>/dev/null)
+    fi
+
+    if [ -z "$gemini_bin" ]; then
+        gemini_bin=$(command -v gemini 2>/dev/null) || return 1
+    fi
+
+    # Resolve symlinks
+    gemini_bin=$(readlink -f "$gemini_bin" 2>/dev/null || echo "$gemini_bin")
+    local base_dir
+    base_dir=$(dirname "$gemini_bin")
+
+    # Locate the bundle directory
+    local bundle_dir=""
+    if [[ "$gemini_bin" == */bundle/* ]]; then
+        bundle_dir="$base_dir"
+    elif [[ "$gemini_bin" == */bin/* ]]; then
+        bundle_dir="$base_dir/../lib/node_modules/@google/gemini-cli/bundle"
+    fi
+
+    if [ -n "$bundle_dir" ] && [ -d "$bundle_dir" ]; then
+        log_info "trying bundle search in $bundle_dir..."
+        local chunk_file
+        # The credentials are in one of the chunk-*.js files
+        chunk_file=$(grep -rl "OAUTH_CLIENT_ID" "$bundle_dir" 2>/dev/null | head -1)
+        if [ -n "$chunk_file" ]; then
+             _extract_from_oauth2_js "$chunk_file" && return 0
+        fi
+    fi
+    return 1
 }
 
 # Strategy 2: Known paths relative to gemini binary
@@ -131,6 +170,7 @@ extract_client_credentials() {
 
     # Try each strategy in order
     if _strategy_cached; then return 0; fi
+    if _strategy_bundle; then _save_client_creds_cache; return 0; fi
     if _strategy_known_paths; then _save_client_creds_cache; return 0; fi
     if _strategy_find_search; then _save_client_creds_cache; return 0; fi
     if _strategy_node_resolve; then _save_client_creds_cache; return 0; fi
@@ -222,15 +262,22 @@ code_assist_response=$(retry_curl -s -X POST "$LOAD_CODE_ASSIST_URL" \
     -H "Content-Type: application/json" \
     -d '{"metadata":{"ideType":"GEMINI_CLI","pluginType":"GEMINI"}}')
 
+# Redact Project ID before logging
+    local redacted_status
+    redacted_status=$(echo "$code_assist_response" | jq -c ".cloudaicompanionProject = \"REDACTED\"" 2>/dev/null || echo "$code_assist_response")
+    log_info "raw loadCodeAssist response: $redacted_status"
+
 if [ -n "$code_assist_response" ]; then
     project_id=$(echo "$code_assist_response" | jq -r '.cloudaicompanionProject // empty' 2>/dev/null)
 
-    # Detect plan/tier
-    tier=$(echo "$code_assist_response" | jq -r '.tier // empty' 2>/dev/null)
+        # Detect plan/tier
+    tier=$(echo "$code_assist_response" | jq -r ".currentTier.id // .tier // empty" 2>/dev/null)
+    plan_name=$(echo "$code_assist_response" | jq -r ".paidTier.name // .currentTier.name // empty" 2>/dev/null)
+
     case "$tier" in
         standard-tier) plan="Paid" ;;
         free-tier)
-            hd_claim=$(echo "$code_assist_response" | jq -r '.hdClaim // empty' 2>/dev/null)
+            hd_claim=$(echo "$code_assist_response" | jq -r ".hdClaim // empty" 2>/dev/null)
             if [ -n "$hd_claim" ] && [ "$hd_claim" != "null" ]; then
                 plan="Workspace"
             else
@@ -240,6 +287,14 @@ if [ -n "$code_assist_response" ]; then
         legacy-tier) plan="Legacy" ;;
         *) plan="${tier:-unknown}" ;;
     esac
+
+    # Use explicit plan name if found (e.g. for Enterprise/Ultra)
+    if [ -n "$plan_name" ]; then
+        if [[ "$plan_name" == *"Ultra"* ]]; then plan="Ultra";
+        elif [[ "$plan_name" == *"Enterprise"* ]]; then plan="Ent";
+        elif [[ "$plan_name" == *"Business"* ]]; then plan="Biz";
+        else plan="$plan_name"; fi
+    fi
     log_info "detected plan: $plan, project: ${project_id:-none}"
 else
     log_warn "loadCodeAssist returned empty response"

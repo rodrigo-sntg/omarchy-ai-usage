@@ -52,7 +52,7 @@ get_sparkline() {
         return
     fi
 
-    local chars="▁▂▃▄▅▆▇█"
+    local char_arr=(" " "▂" "▃" "▄" "▅" "▆" "▇" "█")
     local values
     values=$(tail -n "$count" "$history_file" | jq -r ".$field // 0" 2>/dev/null)
 
@@ -64,14 +64,14 @@ get_sparkline() {
     local sparkline=""
     local val idx
     for val in $values; do
-        # Map 0-100 to index 0-7
         val=$(printf "%.0f" "$val" 2>/dev/null || echo "0")
         [ "$val" -lt 0 ] 2>/dev/null && val=0
         [ "$val" -gt 100 ] 2>/dev/null && val=100
         idx=$(( val * 7 / 100 ))
         [ "$idx" -gt 7 ] && idx=7
         [ "$idx" -lt 0 ] && idx=0
-        sparkline+="${chars:$idx:1}"
+        if [ "$val" -gt 0 ] && [ "$idx" -eq 0 ]; then idx=1; fi
+        sparkline+="${char_arr[$idx]}"
     done
 
     echo "$sparkline"

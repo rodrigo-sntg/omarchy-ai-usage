@@ -60,7 +60,7 @@ detect_system_theme() {
 # ── Colors and styles ─────────────────────────────────────────────────────────
 
 BOLD='\033[1m'
-DIM='\033[2m'
+DIM='\033[90m'
 UNDERLINE='\033[4m'
 RESET='\033[0m'
 
@@ -79,7 +79,7 @@ apply_theme() {
         YELLOW='\033[33m'
         RED='\033[31m'
         WHITE='\033[37m'
-        DIM='\033[2m'
+        DIM='\033[90m'
     fi
 }
 
@@ -106,13 +106,11 @@ progress_bar() {
     color=$(color_for_pct "$pct")
     local bar="${color}"
     for (( i=0; i<filled; i++ )); do bar+="━"; done
-    printf '%b' "$RESET"
-    bar+="${DIM}"
+    bar+="${RESET}${DIM}"
     for (( i=0; i<empty; i++ )); do bar+="╌"; done
     bar+="${RESET}"
     echo -e "$bar"
 }
-
 # time_until removed — now using format_countdown from lib.sh
 time_until() { format_countdown "$1"; }
 
@@ -184,67 +182,69 @@ render_provider() {
     local json="$1" name="$2"
 
     local err
-    err=$(echo "$json" | jq -r '.error // empty' 2>/dev/null)
+    err=$(echo "$json" | jq -r ".error // empty" 2>/dev/null)
     if [ -n "$err" ]; then
-        printf '  %b%b%s%b  %b— unavailable (%s)%b\n\n' "$BOLD" "$CYAN" "$name" "$RESET" "$DIM" "$err" "$RESET"
+        printf "  %b%b%s%b  %b— unavailable (%s)%b\n\n" "$BOLD" "$CYAN" "$name" "$RESET" "$DIM" "$err" "$RESET"
         return
     fi
 
     local plan five_hour seven_day five_hour_reset seven_day_reset
-    plan=$(echo "$json" | jq -r '.plan // "?"')
-    five_hour=$(echo "$json" | jq -r '.five_hour // 0' | cut -d. -f1)
-    seven_day=$(echo "$json" | jq -r '.seven_day // 0' | cut -d. -f1)
-    five_hour_reset=$(echo "$json" | jq -r '.five_hour_reset // ""')
-    seven_day_reset=$(echo "$json" | jq -r '.seven_day_reset // ""')
+    plan=$(echo "$json" | jq -r ".plan // \"?\"")
+    five_hour=$(echo "$json" | jq -r ".five_hour // 0" | cut -d. -f1)
+    seven_day=$(echo "$json" | jq -r ".seven_day // 0" | cut -d. -f1)
+    five_hour_reset=$(echo "$json" | jq -r ".five_hour_reset // \"\"")
+    seven_day_reset=$(echo "$json" | jq -r ".seven_day_reset // \"\"")
 
     local display_plan
     display_plan=$(format_plan "$plan")
 
     local source
-    source=$(echo "$json" | jq -r '.source // empty' 2>/dev/null)
+    source=$(echo "$json" | jq -r ".source // empty" 2>/dev/null)
     local suffix=""
     [ -n "$source" ] && [ "$source" != "null" ] && suffix=" via $source"
 
-    printf '  %b%b%s%b  %b%s%s%b\n' "$BOLD" "$CYAN" "$name" "$RESET" "$DIM" "$display_plan" "$suffix" "$RESET"
+    # Header: Name (Cyan) + Plan (Gray)
+    printf "  %b%b%-12s%b  %b%s%s%b\n" "$BOLD" "$CYAN" "$name" "$RESET" "$DIM" "$display_plan" "$suffix" "$RESET"
 
-    # Weekly bar
+    # Weekly bar: Label (White) + Bar (Color/Gray) + Pct (Color) + Timer (Gray)
     local w_color w_bar w_reset
     w_color=$(color_for_pct "$seven_day")
     w_bar=$(progress_bar "$seven_day" 25)
     w_reset=$(time_until "$seven_day_reset")
-    printf '  Weekly   %b %b%3d%%%b  %b↻ %s%b\n' "$w_bar" "$w_color" "$seven_day" "$RESET" "$DIM" "$w_reset" "$RESET"
+    printf "  Weekly   %b %b%3d%%%b  %b↻ %s%b\n" "$w_bar" "$w_color" "$seven_day" "$RESET" "$DIM" "$w_reset" "$RESET"
 
     # Session bar
     local s_color s_bar s_reset
     s_color=$(color_for_pct "$five_hour")
     s_bar=$(progress_bar "$five_hour" 25)
     s_reset=$(time_until "$five_hour_reset")
-    printf '  Session  %b %b%3d%%%b  %b↻ %s%b\n' "$s_bar" "$s_color" "$five_hour" "$RESET" "$DIM" "$s_reset" "$RESET"
+    printf "  Session  %b %b%3d%%%b  %b↻ %s%b\n" "$s_bar" "$s_color" "$five_hour" "$RESET" "$DIM" "$s_reset" "$RESET"
 
-    # Sparklines (history)
+    # Sparklines (history): Label (White) + Sparklines (Color/Gray)
     local provider_key
-    provider_key=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    provider_key=$(echo "$name" | tr "[:upper:]" "[:lower:]")
     local spark_5h spark_7d
     spark_5h=$(get_sparkline "$provider_key" "five_hour" 20)
     spark_7d=$(get_sparkline "$provider_key" "seven_day" 20)
     if [ -n "$spark_5h" ] || [ -n "$spark_7d" ]; then
-        printf '  %bHistory   %s  %s%b\n' "$DIM" "${spark_7d:-—}" "${spark_5h:-—}" "$RESET"
+        # Color sparklines based on current usage
+        printf "  History   %b%s  %s%b\n" "$CYAN" "${spark_7d:-—}" "${spark_5h:-—}" "$RESET"
     fi
 
     # Extra usage for Claude
     if [ "$name" = "Claude" ]; then
         local raw extra_enabled
-        raw=$(echo "$json" | jq -r '.raw // ""')
+        raw=$(echo "$json" | jq -r ".raw // \"\"")
         if [ -n "$raw" ]; then
-            extra_enabled=$(echo "$raw" | jq -r '.extra_usage.is_enabled // false' 2>/dev/null)
+            extra_enabled=$(echo "$raw" | jq -r ".extra_usage.is_enabled // false" 2>/dev/null)
             if [ "$extra_enabled" = "true" ]; then
                 local used limit
-                used=$(echo "$raw" | jq -r '.extra_usage.used_credits // 0' 2>/dev/null)
-                limit=$(echo "$raw" | jq -r '.extra_usage.monthly_limit // 0' 2>/dev/null)
+                used=$(echo "$raw" | jq -r ".extra_usage.used_credits // 0" 2>/dev/null)
+                limit=$(echo "$raw" | jq -r ".extra_usage.monthly_limit // 0" 2>/dev/null)
                 local used_d limit_d
                 used_d=$(awk "BEGIN { printf \"%.2f\", $used / 100 }")
                 limit_d=$(awk "BEGIN { printf \"%.2f\", $limit / 100 }")
-                printf '  %bExtra credits: $%s / $%s%b\n' "$DIM" "$used_d" "$limit_d" "$RESET"
+                printf "  Extra credits: %b$%s / $%s%b\n" "$DIM" "$used_d" "$limit_d" "$RESET"
             fi
         fi
     fi
