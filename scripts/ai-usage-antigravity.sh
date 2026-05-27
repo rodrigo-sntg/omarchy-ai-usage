@@ -150,7 +150,10 @@ if [ $? -ne 0 ] || [ -z "$user_status" ]; then
 fi
 
 # Log raw response for debugging (larger buffer to avoid truncation)
-log_info "raw user_status response: $(echo "$user_status" | head -c 5000)"
+# Redact PII (name, email) before logging
+    local redacted_status
+    redacted_status=$(echo "$user_status" | jq -c ".userStatus.name = \"REDACTED\" | .userStatus.email = \"REDACTED\"" 2>/dev/null || echo "$user_status")
+    log_info "raw user_status response: $(echo \"$redacted_status\" | head -c 5000)"
 
 # ── Parse quota ───────────────────────────────────────────────────────────────
 
@@ -170,29 +173,29 @@ output=$(echo "$user_status" | jq -c --arg plan "$plan_name" '
         []
     ) as $configs |
 
-    # Calculate percentages
-    (
-        if ($monthly_prompt > 0 and $available_prompt >= 0) then
-            (1 - ($available_prompt / $monthly_prompt))
-        else
-            ([ $configs[] | select(.modelLabel // "" | test("claude|opus|sonnet"; "i")) | .quotaInfo.remainingFraction // 1.0 ] | min | (1 - .))
-        end
-    ) as $primary_usage |
+                                # Calculate percentages
+    # Monthly credits (availablePromptCredits often refers to the current consumed balance)
+    (if ($monthly_prompt > 0 and $available_prompt >= 0) then ($available_prompt / $monthly_prompt) else null end) as $p_credit_usage |
+    (if ($monthly_flow > 0 and $available_flow >= 0) then ($available_flow / $monthly_flow) else null end) as $s_credit_usage |
 
-    (
-        if ($monthly_flow > 0 and $available_flow >= 0) then
-            (1 - ($available_flow / $monthly_flow))
-        else
-            ([ $configs[] | select(.modelLabel // "" | test("pro|flash|gemini"; "i")) | .quotaInfo.remainingFraction // 1.0 ] | min | (1 - .))
-        end
-    ) as $secondary_usage |
+    # Fractional model health (1.0 = 100% healthy/available)
+    (([ $configs[] | select((.label // .modelLabel // "") | test("claude|opus|sonnet"; "i")) | .quotaInfo.remainingFraction // 1.0 ] | min) // 1.0) as $p_frac |
+    (([ $configs[] | select((.label // .modelLabel // "") | test("pro|flash|gemini"; "i")) | .quotaInfo.remainingFraction // 1.0 ] | min) // 1.0) as $s_frac |
+
+    # Reset times
+    (([ $configs[] | select((.label // .modelLabel // "") | test("claude|opus|sonnet"; "i")) | .quotaInfo.resetTime // "" ] | first) // "") as $p_reset |
+    (([ $configs[] | select((.label // .modelLabel // "") | test("pro|flash|gemini"; "i")) | .quotaInfo.resetTime // "" ] | first) // "") as $s_reset |
+
+    # Display logic: Prefer credit-based usage, fallback to model health
+    ($p_credit_usage // (1 - $p_frac)) as $primary_usage |
+    ($s_credit_usage // (1 - $s_frac)) as $secondary_usage |
 
     {
         provider: "antigravity",
         seven_day: (($primary_usage * 100) | floor),
-        seven_day_reset: "",
+        seven_day_reset: $p_reset,
         five_hour: (($secondary_usage * 100) | floor),
-        five_hour_reset: "",
+        five_hour_reset: $s_reset,
         plan: $plan
     }
 ' 2>/dev/null)
